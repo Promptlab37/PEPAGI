@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  pepagi:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - pepagi_data:/data
+      - ./dist:/app/dist
+    env_file:
+      - .env
+    ports:
+      - "3099:3099"
+    environment:
+      - PEPAGI_DATA_DIR=/data
+      - NODE_ENV=production
+
+volumes:
+  pepagi_data:

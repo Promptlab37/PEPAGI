@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PEPAGI Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/settings.css">
+</head>
+<body>
+  <!-- Header -->
+  <header id="header">
+    <div class="header-left">
+      <a href="/" class="logo-link"><span class="logo">PEPAGI</span></a>
+      <span class="version">v0.5.0</span>
+      <span class="separator">|</span>
+      <span class="stat" style="color:var(--text)">Settings</span>
+    </div>
+    <div class="header-right">
+      <a href="/" class="btn-back">&larr; Dashboard</a>
+    </div>
+  </header>
+
+  <!-- Settings container -->
+  <div id="settings-container">
+    <!-- Tab navigation -->
+    <nav class="settings-tabs">
+      <button class="tab-btn active" data-tab="general">General</button>
+      <button class="tab-btn" data-tab="agents">Agents</button>
+      <button class="tab-btn" data-tab="platforms">Platforms</button>
+      <button class="tab-btn" data-tab="security">Security</button>
+      <button class="tab-btn" data-tab="queue">Queue</button>
+      <button class="tab-btn" data-tab="consciousness">Consciousness</button>
+    </nav>
+
+    <!-- Status bar -->
+    <div id="status-bar" class="status-bar" style="display:none"></div>
+
+    <!-- Tab panels -->
+    <div class="tab-panels">
+      <!-- General -->
+      <section class="tab-panel active" id="tab-general">
+        <h2 class="section-title">General</h2>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="managerProvider">Manager Provider</label>
+            <select id="managerProvider" class="form-select">
+              <option value="claude">Claude</option>
+              <option value="gpt">GPT</option>
+              <option value="gemini">Gemini</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="managerModel">Manager Model</label>
+            <input type="text" id="managerModel" class="form-input" placeholder="claude-sonnet-4-6">
+          </div>
+        </div>
+
+        <h3 class="subsection-title">Profile</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="profileUserName">Your Name</label>
+            <input type="text" id="profileUserName" class="form-input" placeholder="Your name">
+          </div>
+          <div class="form-group">
+            <label for="profileAssistantName">Assistant Name</label>
+            <input type="text" id="profileAssistantName" class="form-input" placeholder="PEPAGI">
+          </div>
+          <div class="form-group">
+            <label for="profileLanguage">Language</label>
+            <input type="text" id="profileLanguage" class="form-input" placeholder="cs">
+          </div>
+          <div class="form-group">
+            <label for="profileCommunicationStyle">Communication Style</label>
+            <select id="profileCommunicationStyle" class="form-select">
+              <option value="human">Human (natural)</option>
+              <option value="direct">Direct (concise)</option>
+            </select>
+          </div>
+          <div class="form-group toggle-group">
+            <label for="profileSubscriptionMode">Claude Subscription Mode</label>
+            <label class="toggle"><input type="checkbox" id="profileSubscriptionMode"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="form-group toggle-group">
+            <label for="profileGptSubscriptionMode">GPT Subscription Mode</label>
+            <label class="toggle"><input type="checkbox" id="profileGptSubscriptionMode"><span class="toggle-slider"></span></label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Agents -->
+      <section class="tab-panel" id="tab-agents">
+        <h2 class="section-title">Agent Configuration</h2>
+        <div id="agents-config" class="agents-config-grid"></div>
+      </section>
+
+      <!-- Platforms -->
+      <section class="tab-panel" id="tab-platforms">
+        <h2 class="section-title">Platform Configuration</h2>
+        <div id="platforms-config" class="platforms-config-grid"></div>
+      </section>
+
+      <!-- Security -->
+      <section class="tab-panel" id="tab-security">
+        <h2 class="section-title">Security</h2>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="secMaxCostPerTask">Max Cost Per Task ($)</label>
+            <input type="number" id="secMaxCostPerTask" class="form-input" step="0.1" min="0">
+          </div>
+          <div class="form-group">
+            <label for="secMaxCostPerSession">Max Cost Per Session ($)</label>
+            <input type="number" id="secMaxCostPerSession" class="form-input" step="1" min="0">
+          </div>
+        </div>
+
+        <h3 class="subsection-title">Blocked Commands</h3>
+        <div class="form-group full-width">
+          <textarea id="secBlockedCommands" class="form-textarea" rows="4" placeholder="One command per line"></textarea>
+          <span class="form-hint">One command per line. These shell commands will be blocked.</span>
+        </div>
+
+        <h3 class="subsection-title">Actions Requiring Approval</h3>
+        <div id="secApprovalCheckboxes" class="checkbox-grid"></div>
+      </section>
+
+      <!-- Queue -->
+      <section class="tab-panel" id="tab-queue">
+        <h2 class="section-title">Task Queue</h2>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="queueMaxConcurrent">Max Concurrent Tasks</label>
+            <input type="number" id="queueMaxConcurrent" class="form-input" min="1" max="20">
+          </div>
+          <div class="form-group">
+            <label for="queueTimeout">Task Timeout (ms)</label>
+            <input type="number" id="queueTimeout" class="form-input" min="10000" step="10000">
+          </div>
+        </div>
+      </section>
+
+      <!-- Consciousness -->
+      <section class="tab-panel" id="tab-consciousness">
+        <h2 class="section-title">Consciousness</h2>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="consciousnessProfile">Profile</label>
+            <select id="consciousnessProfile" class="form-select">
+              <option value="MINIMAL">MINIMAL &mdash; No qualia, cost-optimized</option>
+              <option value="STANDARD">STANDARD &mdash; Balanced, qualia + emotion</option>
+              <option value="RICH">RICH &mdash; Full consciousness, evolution</option>
+              <option value="RESEARCHER">RESEARCHER &mdash; Full transparency, verbose</option>
+              <option value="SAFE-MODE">SAFE-MODE &mdash; Emergency dormant state</option>
+            </select>
+          </div>
+          <div class="form-group toggle-group">
+            <label for="consciousnessEnabled">Consciousness Enabled</label>
+            <label class="toggle"><input type="checkbox" id="consciousnessEnabled"><span class="toggle-slider"></span></label>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Save button -->
+    <div class="settings-footer">
+      <button id="save-btn" class="btn-save">Save Configuration</button>
+    </div>
+  </div>
+
+  <script type="module" src="/js/settings.js"></script>
+</body>
+</html>

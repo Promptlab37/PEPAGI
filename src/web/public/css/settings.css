@@ -1,0 +1,403 @@
+/* ═══════════════════════════════════════════════════════════════
+   PEPAGI Settings Page — Styles
+   Reuses dashboard theme variables from styles.css
+   ═══════════════════════════════════════════════════════════════ */
+
+.logo-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.btn-back {
+  display: inline-block;
+  padding: 6px 16px;
+  background: var(--surface);
+  color: var(--cyan);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-family: var(--font-sans);
+  transition: background var(--transition);
+}
+.btn-back:hover {
+  background: rgba(0, 229, 204, 0.1);
+}
+
+/* ── Settings container ───────────────────────────────────── */
+#settings-container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Tab navigation ───────────────────────────────────────── */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 10px 16px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+  background: rgba(100, 100, 180, 0.1);
+}
+
+.tab-btn.active {
+  background: rgba(0, 229, 204, 0.15);
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+/* ── Tab panels ───────────────────────────────────────────── */
+.tab-panel {
+  display: none;
+}
+.tab-panel.active {
+  display: block;
+}
+
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--cyan);
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.subsection-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 20px;
+  margin-bottom: 12px;
+}
+
+/* ── Form grid ────────────────────────────────────────────── */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-group.full-width {
+  grid-column: 1 / -1;
+}
+
+.form-group label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.form-input,
+.form-select,
+.form-textarea {
+  padding: 8px 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px rgba(0, 229, 204, 0.1);
+}
+
+.form-input::placeholder { color: var(--dim); }
+.form-textarea { resize: vertical; min-height: 60px; }
+.form-select { cursor: pointer; }
+
+.form-hint {
+  font-size: 0.72rem;
+  color: var(--dim);
+  font-style: italic;
+}
+
+/* ── Toggle switch ────────────────────────────────────────── */
+.toggle-group {
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.toggle input { opacity: 0; width: 0; height: 0; }
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--dimmer);
+  border-radius: 22px;
+  transition: background var(--transition);
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text);
+  bottom: 3px;
+  left: 3px;
+  transition: transform var(--transition);
+}
+
+.toggle input:checked + .toggle-slider {
+  background: var(--cyan);
+}
+
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(18px);
+}
+
+/* ── Range slider ─────────────────────────────────────────── */
+.range-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-range {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--dimmer);
+  border-radius: 2px;
+  outline: none;
+}
+
+.form-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--cyan);
+  cursor: pointer;
+}
+
+.range-value {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── Agent config cards ───────────────────────────────────── */
+.agents-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 16px;
+}
+
+.agent-config-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  transition: border-color var(--transition);
+}
+
+.agent-config-card:hover {
+  border-color: rgba(100, 100, 180, 0.3);
+}
+
+.agent-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-config-name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 1rem;
+  text-transform: uppercase;
+}
+
+/* ── API key field ────────────────────────────────────────── */
+.apikey-group {
+  display: flex;
+  gap: 6px;
+}
+
+.apikey-group .form-input {
+  flex: 1;
+}
+
+.btn-show-key,
+.btn-test {
+  padding: 6px 12px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  white-space: nowrap;
+}
+
+.btn-show-key:hover { color: var(--text); background: rgba(100, 100, 180, 0.15); }
+.btn-test:hover { color: var(--cyan); background: rgba(0, 229, 204, 0.1); }
+.btn-test.testing { color: var(--gold); cursor: wait; }
+.btn-test.success { color: var(--green); border-color: var(--green); }
+.btn-test.failed { color: var(--coral); border-color: var(--coral); }
+
+/* ── Platform config ──────────────────────────────────────── */
+.platforms-config-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.platform-config-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.platform-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.platform-config-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-transform: capitalize;
+}
+
+/* ── Checkbox grid ────────────────────────────────────────── */
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.checkbox-item input[type="checkbox"] {
+  accent-color: var(--cyan);
+  width: 16px;
+  height: 16px;
+}
+
+/* ── Status bar ───────────────────────────────────────────── */
+.status-bar {
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+  font-family: var(--font-mono);
+  transition: opacity var(--transition);
+}
+
+.status-bar.success {
+  background: rgba(74, 222, 128, 0.1);
+  color: var(--green);
+  border: 1px solid rgba(74, 222, 128, 0.2);
+}
+
+.status-bar.error {
+  background: rgba(255, 107, 107, 0.1);
+  color: var(--coral);
+  border: 1px solid rgba(255, 107, 107, 0.2);
+}
+
+.status-bar.loading {
+  background: rgba(255, 217, 61, 0.1);
+  color: var(--gold);
+  border: 1px solid rgba(255, 217, 61, 0.2);
+}
+
+/* ── Save button ──────────────────────────────────────────── */
+.settings-footer {
+  padding: 20px 0;
+  text-align: right;
+}
+
+.btn-save {
+  padding: 10px 32px;
+  background: linear-gradient(135deg, var(--cyan), #00b3a0);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: opacity var(--transition), transform var(--transition);
+}
+
+.btn-save:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-save:active { transform: translateY(0); }
+.btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 700px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .agents-config-grid { grid-template-columns: 1fr; }
+  .settings-tabs { flex-wrap: wrap; }
+}

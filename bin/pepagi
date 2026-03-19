@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Follow symlinks to find the real script location
+SCRIPT="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT" ]; do
+  SCRIPT="$(readlink "$SCRIPT")"
+  # Handle relative symlinks
+  [[ "$SCRIPT" == /* ]] || SCRIPT="$(dirname "${BASH_SOURCE[0]}")/$SCRIPT"
+done
+DIR="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
+exec "$DIR/node_modules/.bin/tsx" "$DIR/src/cli.ts" "$@"

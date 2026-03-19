@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables (NEVER commit these)
+.env
+.env.local
+.env.*.local
+
+# PEPAGI runtime data
+~/.pepagi/
+.pepagi/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# TypeScript
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+
+# Playwright
+playwright-report/
+test-results/
+
+# WhatsApp session (contains auth tokens)
+.wwebjs_auth/
+.wwebjs_cache/

@@ -1,0 +1,55 @@
+{
+  "name": "pepagi",
+  "version": "0.5.0",
+  "description": "PEPAGI – Neuro-Evolutionary eXecution & Unified Synthesis – Mediated AGI Platform",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "pepagi": "./bin/pepagi"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "setup": "tsx src/setup.ts",
+    "daemon": "tsx src/daemon.ts",
+    "daemon:logs": "tail -f ~/.pepagi/logs/daemon.log",
+    "dev": "tsx src/index.ts",
+    "build": "tsc && cp -r src/web/public dist/web/public 2>/dev/null || true",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tui": "tsx src/ui/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.72",
+    "@types/blessed": "^0.1.27",
+    "@types/pdfkit": "^0.17.5",
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
+    "chalk": "^5.4.0",
+    "discord.js": "^14.25.1",
+    "eventemitter3": "^5.0.1",
+    "mammoth": "^1.12.0",
+    "nanoid": "^5.0.0",
+    "pdfkit": "^0.18.0",
+    "playwright": "^1.58.2",
+    "telegraf": "^4.16.3",
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.25.0"
+  },
+  "overrides": {
+    "undici": ">=6.24.0",
+    "yauzl": ">=3.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

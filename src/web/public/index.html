@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PEPAGI Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <!-- Header -->
+  <header id="header">
+    <div class="header-left">
+      <span id="header-spinner" class="header-spinner" style="display:none"></span>
+      <span class="logo">PEPAGI</span>
+      <span class="version">v0.5.0</span>
+      <span class="separator">|</span>
+      <span id="uptime" class="stat">--</span>
+      <span class="separator">|</span>
+      <span class="stat-label">Cost:</span>
+      <span id="session-cost" class="stat stat-cost">$0.000</span>
+      <span id="cost-rate" class="stat stat-dim"></span>
+    </div>
+    <div class="header-center">
+      <span id="learning-multiplier" class="stat stat-dim" title="Learning multiplier"></span>
+      <span class="separator">|</span>
+      <span class="stat-label">Tasks:</span>
+      <span id="tasks-active" class="stat stat-cyan">0</span>
+      <span class="stat-dim">/</span>
+      <span id="tasks-completed" class="stat stat-green">0</span>
+      <span class="stat-dim">done</span>
+      <span class="stat-dim">/</span>
+      <span id="tasks-failed" class="stat stat-coral">0</span>
+      <span class="stat-dim">fail</span>
+    </div>
+    <div class="header-right">
+      <a href="/settings" class="header-settings" title="Settings">&#9881;</a>
+      <span id="ws-status" class="ws-dot ws-disconnected" title="WebSocket disconnected"></span>
+      <span id="agent-count" class="stat stat-dim">0 agents</span>
+    </div>
+  </header>
+
+  <!-- Task input bar -->
+  <div id="task-bar">
+    <input type="text" id="task-input" placeholder="Submit a task... (press / to focus)" autocomplete="off">
+    <button id="task-submit" type="button">Send</button>
+  </div>
+
+  <!-- Last response panel -->
+  <div id="last-response" class="last-response" style="display:none">
+    <div class="last-response-header">
+      <span class="last-response-icon">&#10003;</span>
+      <span id="last-response-title" class="last-response-title"></span>
+      <button id="last-response-close" class="last-response-close">&times;</button>
+    </div>
+    <div id="last-response-body" class="last-response-body"></div>
+  </div>
+
+  <!-- Main dashboard grid -->
+  <main id="dashboard">
+    <!-- Tasks Panel -->
+    <section id="panel-tasks" class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">&#9654;</span> Pipeline
+      </div>
+      <div class="panel-body" id="tasks-body">
+        <table class="data-table" id="tasks-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Title</th>
+              <th>Agent</th>
+              <th>Difficulty</th>
+              <th>Confidence</th>
+              <th>Cost</th>
+              <th>Duration</th>
+            </tr>
+          </thead>
+          <tbody id="tasks-tbody"></tbody>
+        </table>
+        <div id="tasks-empty" class="empty-state">No tasks yet. Submit one above.</div>
+      </div>
+    </section>
+
+    <!-- Agents Panel -->
+    <section id="panel-agents" class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">&#9673;</span> Agent Pool
+      </div>
+      <div class="panel-body" id="agents-body">
+        <div id="agents-grid" class="agents-grid"></div>
+        <div id="agents-empty" class="empty-state">No agents active</div>
+      </div>
+    </section>
+
+    <!-- Events Panel -->
+    <section id="panel-events" class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">&#9672;</span> Neural Stream
+        <div class="panel-actions">
+          <select id="event-filter" class="filter-select">
+            <option value="all">All</option>
+            <option value="info">Info</option>
+            <option value="warn">Warn</option>
+            <option value="error">Error</option>
+          </select>
+        </div>
+      </div>
+      <div class="panel-body events-scroll" id="events-body"></div>
+    </section>
+
+    <!-- Thought Process Panel (dedicated, user-requested) -->
+    <section id="panel-thoughts" class="panel panel-thoughts">
+      <div class="panel-header">
+        <span class="panel-icon">&#9881;</span> Thought Process
+        <span id="thoughts-count" class="stat stat-dim" style="margin-left:auto;font-size:0.7rem"></span>
+      </div>
+      <div class="panel-body thoughts-scroll" id="thoughts-body">
+        <div id="thoughts-feed" class="thoughts-feed"></div>
+        <div id="thoughts-empty" class="empty-state">No thoughts yet. Submit a task to see the agent's thought process.</div>
+      </div>
+    </section>
+
+    <!-- Consciousness Panel -->
+    <section id="panel-consciousness" class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">&#10026;</span> Consciousness
+        <span id="qualia-emoji" class="qualia-emoji"></span>
+      </div>
+      <div class="panel-body" id="consciousness-body">
+        <div id="qualia-bars"></div>
+      </div>
+    </section>
+
+    <!-- Memory Panel -->
+    <section id="panel-memory" class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">&#9998;</span> Memory
+      </div>
+      <div class="panel-body" id="memory-body">
+        <div class="memory-grid" id="memory-grid"></div>
+      </div>
+    </section>
+
+    <!-- Cost Panel -->
+    <section id="panel-cost" class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">&#9733;</span> Cost &amp; Tokens
+      </div>
+      <div class="panel-body" id="cost-body">
+        <div class="cost-stats" id="cost-stats"></div>
+        <div class="cost-chart-container">
+          <svg id="cost-chart" class="cost-chart" viewBox="0 0 400 100" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+    </section>
+
+    <!-- Platforms Panel -->
+    <section id="panel-platforms" class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">&#9729;</span> Platforms
+      </div>
+      <div class="panel-body" id="platforms-body">
+        <div class="platforms-grid" id="platforms-grid"></div>
+      </div>
+    </section>
+
+    <!-- Security Panel -->
+    <section id="panel-security" class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">&#9888;</span> Security
+      </div>
+      <div class="panel-body" id="security-body">
+        <div id="threat-gauge" class="threat-gauge"></div>
+        <div id="security-events" class="security-events"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Overlay modal (F1-F9) -->
+  <div id="overlay" class="overlay">
+    <div class="overlay-content">
+      <div class="overlay-header">
+        <span id="overlay-title" class="overlay-title"></span>
+        <button id="overlay-close" class="overlay-close">&times;</button>
+      </div>
+      <div id="overlay-body" class="overlay-body"></div>
+    </div>
+  </div>
+
+  <!-- Bottom status bar -->
+  <footer id="bottom-bar" class="bottom-bar"></footer>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
