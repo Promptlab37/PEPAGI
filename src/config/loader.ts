@@ -35,6 +35,23 @@ async function migrateDataDir(): Promise<void> {
 // Run migration once at module load time (non-blocking)
 void migrateDataDir();
 
+// ─── Kiro Agent Config (dedicated schema — no apiKey/temperature/maxOutputTokens/maxAgenticTurns) ───
+const KiroAgentConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.string().default("auto"),
+  agent: z.string().default(""),
+  timeout: z.number().default(120),
+  forwardMcpServers: z.array(z.object({
+    name: z.string(),
+    command: z.string(),
+    args: z.array(z.string()).default([]),
+    env: z.array(z.object({
+      name: z.string(),
+      value: z.string(),
+    })).default([]),
+  })).default([]),
+});
+
 const AgentConfigSchema = z.object({
   enabled: z.boolean().default(true),
   apiKey: z.string().default(""),
@@ -167,6 +184,7 @@ const PepagiConfigSchema = z.object({
     gpt: AgentConfigSchema.extend({ model: z.string().default("gpt-4o") }),
     gemini: AgentConfigSchema.extend({ model: z.string().default("gemini-2.0-flash") }),
     ollama: AgentConfigSchema.extend({ model: z.string().default("ollama/llama3.2") }).optional(),
+    kiro: KiroAgentConfigSchema.optional(),
   }).default({
     claude: { enabled: true, apiKey: "", model: "claude-sonnet-4-6", maxOutputTokens: 4096, temperature: 0.3, maxAgenticTurns: 0 },
     gpt: { enabled: false, apiKey: "", model: "gpt-4o", maxOutputTokens: 4096, temperature: 0.3, maxAgenticTurns: 0 },
@@ -270,6 +288,7 @@ export async function loadConfig(): Promise<PepagiConfig> {
   if (!agents.gpt) agents.gpt = { enabled: false, apiKey: "", model: "gpt-4o", maxOutputTokens: 4096, temperature: 0.3, maxAgenticTurns: 0 };
   if (!agents.gemini) agents.gemini = { enabled: false, apiKey: "", model: "gemini-2.0-flash", maxOutputTokens: 4096, temperature: 0.3, maxAgenticTurns: 0 };
   if (!agents.ollama) agents.ollama = { enabled: false, apiKey: "", model: "ollama/llama3.2", maxOutputTokens: 4096, temperature: 0.3, maxAgenticTurns: 0 };
+  if (!agents.kiro) agents.kiro = { enabled: false, model: "auto", agent: "", timeout: 120, forwardMcpServers: [] };
 
   // Overlay platform env vars
   const platforms = (raw.platforms ?? {}) as Record<string, Record<string, unknown>>;
@@ -305,6 +324,10 @@ export async function loadConfig(): Promise<PepagiConfig> {
     agents.gemini.apiKey = process.env.GOOGLE_API_KEY;
     agents.gemini.enabled = true;
     log("GOOGLE_API_KEY detected — Gemini agent enabled");
+  }
+  if (process.env.KIRO_CLI_ENABLED === "true") {
+    agents.kiro = { ...(agents.kiro as Record<string, unknown> ?? {}), enabled: true };
+    log("KIRO_CLI_ENABLED detected — Kiro agent enabled");
   }
 
   // Overlay Google OAuth2 env vars

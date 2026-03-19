@@ -15,12 +15,12 @@ Add Kiro CLI as a new LLM provider to PEPAGI using the Agent Client Protocol (AC
     - Add zero-cost pricing entry: `{ model: "auto", provider: "kiro", inputCostPer1M: 0, outputCostPer1M: 0, contextWindow: 200_000, supportsTools: true }`
     - _Requirements: 8.2_
 
-- [ ] 2. Add Kiro configuration schema to config loader
-  - [ ] 2.1 Define KiroAgentConfigSchema in `src/config/loader.ts`
+- [x] 2. Add Kiro configuration schema to config loader
+  - [x] 2.1 Define KiroAgentConfigSchema in `src/config/loader.ts`
     - Create dedicated Zod schema with fields: `enabled` (boolean, default false), `model` (string, default "auto"), `agent` (string, default ""), `timeout` (number, default 120), `forwardMcpServers` (array of MCP server objects, default [])
     - Schema must NOT include apiKey, temperature, maxOutputTokens, or maxAgenticTurns
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 15.1_
-  - [ ] 2.2 Add `kiro` key to agents config object in PepagiConfigSchema
+  - [x] 2.2 Add `kiro` key to agents config object in PepagiConfigSchema
     - Add as optional field using KiroAgentConfigSchema
     - Add KIRO_CLI_ENABLED env var overlay in loadConfig()
     - Add default kiro agent entry in the pre-populate block

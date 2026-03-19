@@ -29,6 +29,7 @@ const AGENT_STRENGTHS: Record<string, string> = {
   gemini: "Long context processing, multimodal analysis, speed",
   ollama: "Local model, privacy-first, zero API cost, works offline",
   lmstudio: "Local model via LM Studio, privacy-first, zero API cost, works offline",
+  kiro: "Agentic coding, built-in tools, ACP protocol, zero API cost",
 };
 
 /**

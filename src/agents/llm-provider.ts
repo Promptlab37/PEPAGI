@@ -36,7 +36,7 @@ export interface ToolCall {
 }
 
 export interface LLMCallOptions {
-  provider: string;
+  provider: "claude" | "gpt" | "gemini" | "ollama" | "lmstudio" | "kiro";
   model: string;
   systemPrompt: string;
   messages: Array<{ role: "user" | "assistant"; content: string }>;
