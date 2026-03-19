@@ -22,11 +22,18 @@ logs/
 Thumbs.db
 desktop.ini
 
-# Editor
+# Editor / IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+.fleet/
 
 # TypeScript
 *.tsbuildinfo
@@ -41,3 +48,6 @@ test-results/
 # WhatsApp session (contains auth tokens)
 .wwebjs_auth/
 .wwebjs_cache/
+
+# Kiro — track steering/specs, ignore local settings
+.kiro/settings/
