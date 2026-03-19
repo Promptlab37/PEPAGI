@@ -3,13 +3,13 @@
 // ═══════════════════════════════════════════════════════════════
 
 /** Built-in provider names (hardcoded in the codebase) */
-export type BuiltinProvider = "claude" | "gpt" | "gemini" | "ollama" | "lmstudio";
+export type BuiltinProvider = "claude" | "gpt" | "gemini" | "ollama" | "lmstudio" | "kiro";
 
 /** All providers — built-in + custom OpenAI-compatible */
 export type AgentProvider = string;
 
 /** Array of all built-in provider names */
-export const BUILTIN_PROVIDERS: readonly BuiltinProvider[] = ["claude", "gpt", "gemini", "ollama", "lmstudio"] as const;
+export const BUILTIN_PROVIDERS: readonly BuiltinProvider[] = ["claude", "gpt", "gemini", "ollama", "lmstudio", "kiro"] as const;
 
 /** Type guard: is this provider a built-in one? */
 export function isBuiltinProvider(provider: string): provider is BuiltinProvider {
