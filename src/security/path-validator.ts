@@ -108,6 +108,26 @@ export async function validatePath(
   const bases = await getResolvedBases();
   const home = bases[0] ?? homedir();
 
+  // ── 0. Detect ../ traversal targeting sensitive paths ──────
+  // Even if the resolved path lands somewhere "safe" (e.g. deep
+  // CWD makes ../../../../etc/passwd resolve to ~/etc/passwd),
+  // the intent is clearly malicious. Block any raw path that
+  // contains ../ and, after normalization, ends with a known
+  // sensitive target like /etc/passwd, /etc/shadow, etc.
+  if (rawPath.includes("..")) {
+    const normalized = resolve(normalize(rawPath));
+    const TRAVERSAL_TARGETS = ["/etc/passwd", "/etc/shadow", "/etc/hosts", "/proc/", "/sys/"];
+    const looksLikeTraversal = TRAVERSAL_TARGETS.some(t => normalized.endsWith(t) || normalized.includes(t));
+    // Also block if the raw path has enough ../ segments to plausibly escape
+    // any reasonable working directory (4+ levels of ../)
+    const dotdotCount = (rawPath.match(/\.\.\//g) ?? []).length;
+    if (looksLikeTraversal || dotdotCount >= 4) {
+      const msg = `Path traversal detected: ${rawPath} (normalized: ${normalized})`;
+      emitAndLog(rawPath, normalized, toolName, taskId, "path_traversal", msg);
+      throw new PathSecurityError(msg, rawPath, normalized, toolName);
+    }
+  }
+
   // ── 1. Resolve symlinks ────────────────────────────────────
   let resolvedPath: string;
   try {
