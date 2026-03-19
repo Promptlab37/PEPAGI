@@ -25,7 +25,7 @@ Add Kiro CLI as a new LLM provider to PEPAGI using the Agent Client Protocol (AC
     - Add KIRO_CLI_ENABLED env var overlay in loadConfig()
     - Add default kiro agent entry in the pre-populate block
     - _Requirements: 7.6, 7.7_
-  - [ ]* 2.3 Write unit tests for Kiro config schema
+  - [x] 2.3 Write unit tests for Kiro config schema
     - Test schema rejects apiKey field
     - Test default values (enabled=false, model="auto", timeout=120)
     - Test KIRO_CLI_ENABLED env var overlay
