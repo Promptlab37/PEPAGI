@@ -48,17 +48,17 @@ Add Kiro CLI as a new LLM provider to PEPAGI using the Agent Client Protocol (AC
   - Ensure all existing tests still pass (`npm test`)
   - Ask the user if questions arise.
 
-- [ ] 5. Implement KiroCircuitBreaker and ACP helpers in `src/agents/llm-provider.ts`
-  - [ ] 5.1 Add KiroCircuitBreaker class
+- [x] 5. Implement KiroCircuitBreaker and ACP helpers in `src/agents/llm-provider.ts`
+  - [x] 5.1 Add KiroCircuitBreaker class
     - Follow exact same pattern as ClaudeCodeCircuitBreaker (THRESHOLD=10, RESET_TIMEOUT=300_000, WINDOW=600_000)
     - Emit system:alert events on state transitions (closed→open, open→half-open, half-open→closed)
     - Export singleton `kiroCircuitBreaker`
     - _Requirements: 9.1, 9.2, 9.3, 16.1, 16.2, 16.3_
-  - [ ] 5.2 Add ACP JSON-RPC helper functions
+  - [x] 5.2 Add ACP JSON-RPC helper functions
     - `acpRequest(id, method, params)` — builds JSON-RPC 2.0 request string (with protocolVersion: 1 for initialize)
     - `ACPMessage` interface for parsing responses/notifications (session/update with update.sessionUpdate discriminator)
     - _Requirements: 2.2, 3.1, 3.2_
-  - [ ]* 5.3 Write property test for circuit breaker state machine
+  - [x] 5.3 Write property test for circuit breaker state machine
     - **Property 11: Circuit Breaker State Machine**
     - Use fast-check to generate random sequences of success/failure outcomes
     - Verify state transitions: closed→open after THRESHOLD failures, open→half-open after RESET_TIMEOUT, half-open→closed on success, half-open→open on failure
