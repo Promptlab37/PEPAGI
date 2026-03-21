@@ -16,6 +16,9 @@ let spawnEnoent = false;
 /** Captured stdin writes from the most recent kiro-cli spawn (for PBT) */
 let capturedStdinWrites: string[] = [];
 
+/** Captured spawn arguments from the most recent kiro-cli spawn (for PBT) */
+let capturedSpawnArgs: string[] = [];
+
 const SIMULATOR_PATH = resolve("dist/agents/__tests__/acp-simulator.js");
 
 // ─── Mock child_process.spawn to intercept kiro-cli calls ────
@@ -27,6 +30,7 @@ vi.mock("node:child_process", async (importOriginal) => {
     spawn: vi.fn((...args: Parameters<typeof original.spawn>) => {
       const cmd = args[0] as string;
       if (cmd === "kiro-cli") {
+        capturedSpawnArgs = (args[1] as string[] | undefined) ?? [];
         if (spawnEnoent) {
           return original.spawn("__nonexistent_binary_kiro_test__", [], {
             stdio: ["pipe", "pipe", "pipe"],
@@ -117,6 +121,7 @@ describe("Kiro Provider", () => {
     activeScenario = "happy-path";
     spawnEnoent = false;
     capturedStdinWrites = [];
+    capturedSpawnArgs = [];
     mockKiroConfig = {
       enabled: true,
       model: "auto",
@@ -352,6 +357,92 @@ describe("Kiro Provider", () => {
     });
   });
 
+  // ── Property 3: Prompt Construction Completeness (PBT) ──────
+
+  describe("Property 3: Prompt Construction Completeness", () => {
+    /**
+     * Parse captured stdin writes and extract the session/prompt content blocks.
+     */
+    function extractPromptBlocks(writes: string[]): Array<{ type: string; text: string }> {
+      for (const raw of writes) {
+        for (const line of raw.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const msg = JSON.parse(trimmed);
+            if (msg.method === "session/prompt" && msg.params?.prompt) {
+              return msg.params.prompt as Array<{ type: string; text: string }>;
+            }
+          } catch { /* skip */ }
+        }
+      }
+      return [];
+    }
+
+    // Feature: kiro-cli-support, Property 3: Prompt Construction Completeness
+    it("prompt contains full systemPrompt and all message contents for random inputs", async () => {
+      // Filter out strings with characters that break JSON round-trip
+      const arbSafeString = (min: number, max: number) =>
+        fc.string({ minLength: min, maxLength: max }).filter(s => !s.includes('"') && !s.includes("\\") && !s.includes("\n") && s.trim().length > 0);
+
+      const arbSystemPrompt = arbSafeString(1, 300);
+      const arbMessages = fc.array(
+        fc.record({
+          role: fc.constant("user" as const),
+          content: arbSafeString(1, 200),
+        }),
+        { minLength: 1, maxLength: 5 },
+      );
+
+      await fc.assert(
+        fc.asyncProperty(
+          arbSystemPrompt, arbMessages,
+          async (systemPrompt, messages) => {
+            // Reset state
+            activeScenario = "happy-path";
+            spawnEnoent = false;
+            capturedStdinWrites = [];
+            mockKiroConfig = {
+              enabled: true,
+              model: "auto",
+              agent: "",
+              timeout: 120,
+              forwardMcpServers: [],
+            };
+            kiroCircuitBreaker.forceReset();
+
+            const provider = new LLMProvider();
+            await provider.call({
+              provider: "kiro" as const,
+              model: "auto",
+              systemPrompt,
+              messages,
+            });
+
+            const blocks = extractPromptBlocks(capturedStdinWrites);
+
+            // Invariant 1: Number of blocks = 1 (system prompt) + messages.length
+            expect(blocks).toHaveLength(1 + messages.length);
+
+            // Invariant 2: All blocks have type "text"
+            for (const block of blocks) {
+              expect(block.type).toBe("text");
+            }
+
+            // Invariant 3: First block is the full system prompt (exact match)
+            expect(blocks[0].text).toBe(systemPrompt);
+
+            // Invariant 4: Each subsequent block matches the corresponding message content exactly
+            for (let i = 0; i < messages.length; i++) {
+              expect(blocks[i + 1].text).toBe(messages[i].content);
+            }
+          },
+        ),
+        { numRuns: 100 },
+      );
+    }, 120_000);
+  });
+
   // ── Property 1: ACP Protocol Message Ordering (PBT) ────────
 
   describe("Property 1: ACP Protocol Message Ordering", () => {
@@ -472,4 +563,234 @@ describe("Kiro Provider", () => {
       );
     }, 120_000);
   });
+
+  // ── Property 12: Spawn Arguments from Agent Config (PBT) ───
+
+  describe("Property 12: Spawn Arguments from Config", () => {
+    // Feature: kiro-cli-support, Property 12: Spawn Arguments from Config
+    it("spawn args include --agent and --model flags matching config for random inputs", async () => {
+      // Generate safe agent names (alphanumeric + dash/underscore, or empty)
+      const arbAgent = fc.oneof(
+        fc.constant(""),
+        fc.stringMatching(/^[a-zA-Z][a-zA-Z0-9_-]{0,19}$/),
+      );
+      const arbModel = fc.oneof(
+        fc.constant("auto"),
+        fc.constantFrom(
+          "claude-opus-4.6", "claude-sonnet-4.5", "claude-sonnet-4.0",
+          "claude-haiku-4.5", "deepseek-3.2", "minimax-2.5", "qwen3-coder-next",
+        ),
+      );
+
+      await fc.assert(
+        fc.asyncProperty(arbAgent, arbModel, async (agent, model) => {
+          // Reset state
+          activeScenario = "happy-path";
+          spawnEnoent = false;
+          capturedStdinWrites = [];
+          capturedSpawnArgs = [];
+          mockKiroConfig = {
+            enabled: true,
+            model,
+            agent,
+            timeout: 120,
+            forwardMcpServers: [],
+          };
+          kiroCircuitBreaker.forceReset();
+
+          const provider = new LLMProvider();
+          await provider.call({
+            provider: "kiro" as const,
+            model,
+            systemPrompt: "test",
+            messages: [{ role: "user" as const, content: "hi" }],
+          });
+
+          // Invariant 1: First arg is always "acp"
+          expect(capturedSpawnArgs[0]).toBe("acp");
+
+          // Invariant 2: Non-empty agent → --agent <name> present
+          if (agent) {
+            const agentIdx = capturedSpawnArgs.indexOf("--agent");
+            expect(agentIdx).toBeGreaterThan(0);
+            expect(capturedSpawnArgs[agentIdx + 1]).toBe(agent);
+          }
+
+          // Invariant 3: Empty agent → no --agent flag
+          if (!agent) {
+            expect(capturedSpawnArgs).not.toContain("--agent");
+          }
+
+          // Invariant 4: Non-"auto" model → --model <model> present
+          if (model !== "auto") {
+            const modelIdx = capturedSpawnArgs.indexOf("--model");
+            expect(modelIdx).toBeGreaterThan(0);
+            expect(capturedSpawnArgs[modelIdx + 1]).toBe(model);
+          }
+
+          // Invariant 5: "auto" model → no --model flag
+          if (model === "auto") {
+            expect(capturedSpawnArgs).not.toContain("--model");
+          }
+
+          // Invariant 6: No unexpected flags (only acp, --agent, --model and their values)
+          const expectedArgs: string[] = ["acp"];
+          if (agent) expectedArgs.push("--agent", agent);
+          if (model !== "auto") expectedArgs.push("--model", model);
+          expect(capturedSpawnArgs).toEqual(expectedArgs);
+        }),
+        { numRuns: 100 },
+      );
+    }, 120_000);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Layer 2: Integration Smoke Test against Real Kiro CLI
+// Requirements: 2.1, 2.2, 3.1, 3.2, 4.4, 5.1
+// Gated behind KIRO_CLI_AVAILABLE=true — not run in CI
+// ═══════════════════════════════════════════════════════════════
+
+describe.skipIf(!process.env.KIRO_CLI_AVAILABLE)("Kiro CLI Integration (real binary)", () => {
+  it("should complete a full ACP handshake and return non-empty content", async () => {
+    // Use the real spawn, bypassing the vi.mock
+    const { spawn: realSpawn } = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+
+    const result = await new Promise<{
+      initializeOk: boolean;
+      sessionCreated: boolean;
+      promptResponseReceived: boolean;
+      stopReason: string | null;
+      content: string;
+    }>((resolve, reject) => {
+      const child = realSpawn("kiro-cli", ["acp"], {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      const state = {
+        initializeOk: false,
+        sessionCreated: false,
+        promptResponseReceived: false,
+        stopReason: null as string | null,
+        content: "",
+      };
+
+      let nextId = 1;
+      let lineBuf = "";
+      let initId = 0;
+      let sessionNewId = 0;
+      let promptId = 0;
+      let sessionId = "";
+      let settled = false;
+
+      const timeout = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          try { child.kill("SIGKILL"); } catch { /* */ }
+          reject(new Error("Integration test timed out after 30s"));
+        }
+      }, 30_000);
+
+      const send = (method: string, params: Record<string, unknown> = {}): number => {
+        const id = nextId++;
+        const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
+        child.stdin!.write(msg);
+        return id;
+      };
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        try { child.kill("SIGTERM"); } catch { /* */ }
+        resolve(state);
+      };
+
+      child.stdout!.on("data", (chunk: Buffer) => {
+        lineBuf += chunk.toString();
+        const lines = lineBuf.split("\n");
+        lineBuf = lines.pop() ?? "";
+
+        for (const raw of lines) {
+          const trimmed = raw.trim();
+          if (!trimmed || !trimmed.startsWith("{")) continue;
+
+          let msg: Record<string, unknown>;
+          try { msg = JSON.parse(trimmed); } catch { continue; }
+
+          // Response with id
+          if (typeof msg.id === "number") {
+            if (msg.id === initId && msg.result) {
+              state.initializeOk = true;
+              // Send session/new with read-only intent
+              sessionNewId = send("session/new", { cwd: process.cwd() });
+            } else if (msg.id === sessionNewId && msg.result) {
+              state.sessionCreated = true;
+              sessionId = ((msg.result as Record<string, unknown>).sessionId as string) ?? "";
+
+              // Try to select a planner/readonly mode if available
+              const modes = (msg.result as Record<string, unknown>).modes as {
+                availableModes?: Array<{ id: string }>;
+              } | undefined;
+              if (modes?.availableModes) {
+                const readonlyMode = modes.availableModes.find(
+                  m => m.id.includes("planner") || m.id.includes("readonly"),
+                );
+                if (readonlyMode) {
+                  send("session/set_mode", { sessionId, modeId: readonlyMode.id });
+                }
+              }
+
+              // Send a trivial prompt
+              promptId = send("session/prompt", {
+                sessionId,
+                prompt: [{ type: "text", text: "Reply with exactly: PEPAGI_SMOKE_OK" }],
+              });
+            } else if (msg.id === promptId && msg.result) {
+              const res = msg.result as Record<string, unknown>;
+              state.promptResponseReceived = true;
+              state.stopReason = (res.stopReason as string) ?? null;
+              finish();
+              return;
+            }
+            continue;
+          }
+
+          // Notification — accumulate text chunks
+          if (msg.method === "session/update" && msg.params) {
+            const update = (msg.params as Record<string, unknown>).update as Record<string, unknown> | undefined;
+            if (update?.sessionUpdate === "agent_message_chunk") {
+              const text = ((update.content as Record<string, unknown>)?.text as string) ?? "";
+              state.content += text;
+            }
+          }
+        }
+      });
+
+      child.on("error", (err: NodeJS.ErrnoException) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          reject(new Error(`kiro-cli spawn failed: ${err.message} (code: ${err.code})`));
+        }
+      });
+
+      child.on("close", () => {
+        finish(); // resolve with whatever state we have
+      });
+
+      // Start ACP handshake
+      initId = send("initialize", { protocolVersion: 1 });
+    });
+
+    // Verify: initialize response received
+    expect(result.initializeOk).toBe(true);
+    // Verify: session created
+    expect(result.sessionCreated).toBe(true);
+    // Verify: prompt response with stopReason received
+    expect(result.promptResponseReceived).toBe(true);
+    expect(result.stopReason).toBeTruthy();
+    // Verify: LLMResponse has non-empty content
+    expect(result.content.length).toBeGreaterThan(0);
+  }, 60_000);
 });

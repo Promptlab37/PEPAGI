@@ -130,7 +130,7 @@ Add Kiro CLI as a new LLM provider to PEPAGI using the Agent Client Protocol (AC
     - Spawn simulator, capture stdin writes, verify sequence: initialize → session/new (with cwd) → (optional set_mode based on available modes) → session/prompt (content blocks). No session/set_model — model via --model CLI flag.
     - Use fast-check to generate random LLMCallOptions + KiroAgentConfig (model: "auto" vs specific)
     - **Validates: Requirements 2.1, 2.2, 3.1, 3.2**
-  - [ ]* 9.3 Write property test: Prompt Construction Completeness
+  - [x] 9.3 Write property test: Prompt Construction Completeness
     - **Property 3: Prompt Construction Completeness**
     - Verify prompt sent to simulator contains full systemPrompt and all message contents
     - Use fast-check to generate random systemPrompt + random message arrays
@@ -151,7 +151,7 @@ Add Kiro CLI as a new LLM provider to PEPAGI using the Agent Client Protocol (AC
     - **Property 7: Token Usage Estimation Fallback**
     - Generate random prompt/response strings, verify chars/4 calculation and cost=0
     - **Validates: Requirements 5.3, 5.4, 14.4**
-  - [ ]* 9.8 Write property test: Spawn Arguments from Agent Config
+  - [x] 9.8 Write property test: Spawn Arguments from Agent Config
     - **Property 12: Spawn Arguments from Config**
     - Generate random agent name strings (empty and non-empty) and model strings ("auto" vs specific), verify spawn args include --agent and --model flags via simulator env capture
     - **Validates: Requirements 2.1, 12.1, 12.2**
@@ -164,14 +164,14 @@ Add Kiro CLI as a new LLM provider to PEPAGI using the Agent Client Protocol (AC
     - Generate random MCP server config arrays, verify session/new params via simulator stdin capture
     - **Validates: Requirements 15.1, 15.2, 15.3, 15.4**
 
-- [ ] 10. Add Layer 2 integration smoke test
-  - [ ]* 10.1 Add integration smoke test in `src/agents/__tests__/kiro-provider.test.ts`
+- [x] 10. Add Layer 2 integration smoke test
+  - [x] 10.1 Add integration smoke test in `src/agents/__tests__/kiro-provider.test.ts`
     - Gated behind `KIRO_CLI_AVAILABLE=true` env var using `describe.skipIf`
     - Spawn actual `kiro-cli acp`, send trivial prompt in read-only mode
     - Verify: initialize response received, session created, prompt response with stopReason received, LLMResponse has non-empty content
     - _Requirements: 2.1, 2.2, 3.1, 3.2, 4.4, 5.1_
 
-- [ ] 11. Final checkpoint — Ensure all tests pass
+- [x] 11. Final checkpoint — Ensure all tests pass
   - Run `npm run build` and `npm test`
   - Verify no regressions in existing test suites
   - Ensure all tests pass, ask the user if questions arise.
