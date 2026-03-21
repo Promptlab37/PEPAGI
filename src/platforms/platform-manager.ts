@@ -85,7 +85,7 @@ export class PlatformManager {
         );
         await this.whatsapp.start();
         this.active.push("whatsapp");
-        eventBus.emit({ type: "platform:status", platform: "whatsapp", connected: true });
+        // Don't emit connected:true here — WhatsApp emits it from "ready" event after QR scan
         logger.info("WhatsApp platform started");
       } catch (err) {
         logger.error("WhatsApp failed to start", { error: String(err) });

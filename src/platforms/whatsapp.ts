@@ -117,6 +117,7 @@ export class WhatsAppPlatform {
 
     client.on("ready", async () => {
       logger.info("WhatsApp client ready ✓");
+      eventBus.emit({ type: "platform:status", platform: "whatsapp", connected: true });
     });
 
     client.on("auth_failure", (msg: string) => {
