@@ -724,6 +724,18 @@ function openWhatsAppQR() {
   <p>Scan with WhatsApp → Linked Devices → Link a Device</p>
   <canvas id="qr-canvas" class="hidden"></canvas>
   <div class="status waiting" id="qr-status">⏳ Connecting to server...</div>
+  <button id="btn-reconnect" class="hidden" onclick="doReconnect()" style="
+    margin-top:16px; padding:8px 20px; background:#e74c3c; color:#fff; border:none;
+    border-radius:6px; cursor:pointer; font-size:14px;
+  ">🔄 Reconnect (new QR)</button>
+  <script>
+    function doReconnect() {
+      document.getElementById('btn-reconnect').classList.add('hidden');
+      document.getElementById('qr-status').textContent = '⏳ Reconnecting...';
+      document.getElementById('qr-status').className = 'status waiting';
+      fetch('/api/whatsapp/reconnect', { method: 'POST' }).catch(() => {});
+    }
+  <\/script>
 </body></html>`);
   _qrWindow.document.close();
 
@@ -757,14 +769,19 @@ function openWhatsAppQR() {
 
 function handleWAState(wa) {
   if (!wa || !_qrWindow || _qrWindow.closed) return;
+  const reconnBtn = _qrWindow.document.getElementById('btn-reconnect');
   if (wa.connected) {
     showQRConnected();
+    if (reconnBtn) reconnBtn.classList.remove('hidden');
   } else if (wa.qrCode) {
     renderQR(wa.qrCode);
+    if (reconnBtn) reconnBtn.classList.add('hidden');
   } else if (wa.enabled) {
     setQRStatus('⏳ WhatsApp is starting... QR code will appear here.', 'waiting');
+    if (reconnBtn) reconnBtn.classList.add('hidden');
   } else {
     setQRStatus('⚠️ WhatsApp is not enabled. Enable it in Settings and restart daemon.', '');
+    if (reconnBtn) reconnBtn.classList.add('hidden');
   }
 }
 

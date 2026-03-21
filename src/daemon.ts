@@ -278,6 +278,11 @@ async function main(): Promise<void> {
     console.log(chalk.yellow(`⚠️  Platforma se nepodařila spustit: ${err}`));
   }
 
+  // Wire WhatsApp reconnect into web dashboard
+  if (webDashboard) {
+    webDashboard.setWhatsAppReconnect(() => platforms.reconnectWhatsApp());
+  }
+
   // Load skills dynamically
   const { loaded: skillsLoaded, skipped: skillsSkipped } = await skillRegistry.loadAll();
   if (skillsLoaded > 0) {

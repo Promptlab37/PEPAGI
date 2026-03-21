@@ -213,4 +213,15 @@ export class WhatsAppPlatform {
       logger.info("WhatsApp client stopped.");
     }
   }
+
+  /** Logout and restart — forces new QR code generation. */
+  async reconnect(): Promise<void> {
+    if (this.client) {
+      try { await this.client.logout(); } catch {}
+      try { await this.client.destroy(); } catch {}
+      eventBus.emit({ type: "platform:status", platform: "whatsapp", connected: false });
+    }
+    logger.info("WhatsApp reconnecting — new QR code will be generated");
+    await this.start();
+  }
 }

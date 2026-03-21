@@ -20,6 +20,7 @@ export interface RestDeps {
   startTime: number;
   pool?: AgentPool;
   llm?: LLMProvider;
+  onWhatsAppReconnect?: () => Promise<void>;
 }
 
 /** Send JSON response. */

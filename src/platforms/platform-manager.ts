@@ -151,4 +151,11 @@ export class PlatformManager {
   hasActivePlatforms(): boolean {
     return this.active.length > 0;
   }
+
+  /** Force WhatsApp to logout and re-authenticate (generates new QR). */
+  async reconnectWhatsApp(): Promise<void> {
+    if (this.whatsapp) {
+      await this.whatsapp.reconnect();
+    }
+  }
 }
