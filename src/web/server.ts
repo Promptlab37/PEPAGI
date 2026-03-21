@@ -57,19 +57,21 @@ export class WebDashboardServer {
   private readonly port: number;
   private readonly host: string;
   private readonly startTime: number;
+  private readonly authToken: string;
   private pool: import("../agents/agent-pool.js").AgentPool | null;
   private llm: import("../agents/llm-provider.js").LLMProvider | null;
 
   constructor(
     private readonly taskStore: TaskStore,
     private readonly mediator: Mediator,
-    opts?: { port?: number; host?: string; pool?: import("../agents/agent-pool.js").AgentPool; llm?: import("../agents/llm-provider.js").LLMProvider },
+    opts?: { port?: number; host?: string; authToken?: string; pool?: import("../agents/agent-pool.js").AgentPool; llm?: import("../agents/llm-provider.js").LLMProvider },
   ) {
     this.pool = opts?.pool ?? null;
     this.llm = opts?.llm ?? null;
     this.port = opts?.port ?? 3100;
     // PEPAGI_HOST env var overrides config — useful for Docker without config changes
     this.host = process.env.PEPAGI_HOST ?? opts?.host ?? "127.0.0.1";
+    this.authToken = opts?.authToken ?? "";
     this.bridge = new StateBridge();
     this.publicDir = resolvePublicDir();
     this.startTime = Date.now();
@@ -109,7 +111,17 @@ export class WebDashboardServer {
 
     // WebSocket server on same HTTP server
     this.wss = new WebSocketServer({ server: this.httpServer });
-    this.wss.on("connection", (ws: WebSocket) => {
+    this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+      // Auth check for WebSocket — token via query param or Sec-WebSocket-Protocol
+      if (this.authToken) {
+        const wsUrl = new URL(req.url ?? "/", `http://localhost:${this.port}`);
+        const tokenParam = wsUrl.searchParams.get("token");
+        const protocolToken = req.headers["sec-websocket-protocol"];
+        if (tokenParam !== this.authToken && protocolToken !== this.authToken) {
+          ws.close(4401, "Unauthorized");
+          return;
+        }
+      }
       this.bridge.addClient(ws);
       ws.on("close", () => this.bridge.removeClient(ws));
       ws.on("message", (raw) => {
@@ -160,6 +172,18 @@ export class WebDashboardServer {
     }
   }
 
+  // ── Auth helper ──────────────────────────────────────────
+
+  /** Check Bearer token if web.authToken is configured. Returns true if authorized. */
+  private checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
+    if (!this.authToken) return true; // no auth configured — backward compatible
+    const authHeader = req.headers["authorization"] ?? "";
+    if (authHeader === `Bearer ${this.authToken}`) return true;
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Unauthorized — set Authorization: Bearer <token>" }));
+    return false;
+  }
+
   // ── Request router ─────────────────────────────────────────
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse, deps: RestDeps): Promise<void> {
@@ -167,13 +191,18 @@ export class WebDashboardServer {
     const path = url.pathname;
 
     try {
+      // Health endpoint is always public (for Docker healthcheck)
+      if (path === "/api/health" && req.method === "GET") {
+        handleGetHealth(deps, req, res);
+        return;
+      }
+
+      // All other API routes require auth if configured
+      if (path.startsWith("/api/") && !this.checkAuth(req, res)) return;
+
       // API routes
       if (path === "/api/state" && req.method === "GET") {
         handleGetState(deps, req, res);
-        return;
-      }
-      if (path === "/api/health" && req.method === "GET") {
-        handleGetHealth(deps, req, res);
         return;
       }
       if (path === "/api/task" && req.method === "POST") {

@@ -79,6 +79,11 @@ async function main(): Promise<void> {
   if (config.customProviders) {
     llm.registerCustomProviders(config.customProviders);
   }
+  // Whitelist n8n domain for DLP if configured
+  if (config.n8n?.enabled && config.n8n.baseUrl) {
+    const { dlpEngine } = await import("./security/dlp-engine.js");
+    dlpEngine.addWhitelistedDomain(config.n8n.baseUrl);
+  }
   const pool = new AgentPool(config);
   const guard = new SecurityGuard(config);
   const taskStore = new TaskStore();
@@ -227,7 +232,7 @@ async function main(): Promise<void> {
   // Start Web Dashboard (browser UI on localhost:3100)
   let webDashboard: WebDashboardServer | null = null;
   if (config.web?.enabled !== false) {
-    webDashboard = new WebDashboardServer(taskStore, mediator, { port: config.web?.port ?? 3100, host: config.web?.host, pool, llm });
+    webDashboard = new WebDashboardServer(taskStore, mediator, { port: config.web?.port ?? 3100, host: config.web?.host, authToken: config.web?.authToken, pool, llm });
     try {
       await webDashboard.start();
       logger.info("Web dashboard started", { port: config.web?.port ?? 3100 });

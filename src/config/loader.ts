@@ -105,6 +105,18 @@ const WebDashboardConfigSchema = z.object({
   port: z.number().default(3100),
   /** Bind address — "127.0.0.1" (default, safe) or "0.0.0.0" (Docker/remote). Override via PEPAGI_HOST env var. */
   host: z.string().default("127.0.0.1"),
+  /** Optional Bearer token for REST API + WebSocket auth. Empty = no auth (backward compatible). */
+  authToken: z.string().default(""),
+});
+
+const N8nConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Base URL of n8n instance, e.g. "https://my-n8n.example.com" */
+  baseUrl: z.string().default(""),
+  /** Webhook paths whitelisted for DLP (n8n workflow webhook suffixes) */
+  webhookPaths: z.array(z.string()).default([]),
+  /** API key for n8n (optional — only if n8n requires auth) */
+  apiKey: z.string().default(""),
 });
 
 export const CustomProviderConfigSchema = z.object({
@@ -172,7 +184,8 @@ const PepagiConfigSchema = z.object({
   }).default({ maxConcurrentTasks: 4, taskTimeoutMs: 120_000 }),
   customProviders: z.record(z.string(), CustomProviderConfigSchema).default({}),
   consciousness: ConsciousnessConfigSchema.default({ profile: "MINIMAL", enabled: true }),
-  web: WebDashboardConfigSchema.default({ enabled: true, port: 3100, host: "127.0.0.1" }),
+  web: WebDashboardConfigSchema.default({ enabled: true, port: 3100, host: "127.0.0.1", authToken: "" }),
+  n8n: N8nConfigSchema.default({ enabled: false, baseUrl: "", webhookPaths: [], apiKey: "" }),
 });
 
 export type PepagiConfig = z.infer<typeof PepagiConfigSchema>;

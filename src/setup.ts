@@ -80,6 +80,7 @@ interface SetupConfig {
     requireApproval: string[];
   };
   queue: { maxConcurrentTasks: number; taskTimeoutMs: number };
+  n8n: { enabled: boolean; baseUrl: string; webhookPaths: string[]; apiKey: string };
 }
 
 const DEFAULT_CONFIG: SetupConfig = {
@@ -110,6 +111,7 @@ const DEFAULT_CONFIG: SetupConfig = {
     requireApproval: ["file_delete", "file_write_system", "network_external", "shell_destructive", "git_push", "docker_manage"],
   },
   queue: { maxConcurrentTasks: 4, taskTimeoutMs: 120_000 },
+  n8n: { enabled: false, baseUrl: "", webhookPaths: [], apiKey: "" },
 };
 
 /** Load existing config and deep-merge with defaults (existing values win) */
@@ -136,6 +138,7 @@ async function loadExistingConfig(): Promise<SetupConfig> {
       },
       security:  { ...DEFAULT_CONFIG.security,   ...(raw.security  ?? {}) },
       queue:     { ...DEFAULT_CONFIG.queue,       ...(raw.queue     ?? {}) },
+      n8n:       { ...DEFAULT_CONFIG.n8n,         ...(raw.n8n       ?? {}) },
     };
   } catch {
     warn("Stávající config se nepodařilo načíst — začínám s výchozími hodnotami.");
@@ -553,6 +556,34 @@ async function setup(): Promise<void> {
           warn("Instalace selhala. Spusť ručně: npm install whatsapp-web.js qrcode-terminal");
         }
       }
+    }
+  }
+
+  // ─── KROK 8: n8n Integrace ─────────────────────────────────
+
+  header("KROK 8: n8n Webhook Integrace (volitelné)");
+  info("Propojení s n8n = přístup k tisícům aplikací (Slack, Notion, Shopify...)");
+  info("bez psaní kódu. Stačí zadat URL tvé n8n instance.");
+  info("");
+
+  const n8nStatus = config.n8n.enabled && config.n8n.baseUrl
+    ? chalk.green(`aktivní (${config.n8n.baseUrl})`)
+    : chalk.gray("není nastaven");
+  info(`Stav: ${n8nStatus}`);
+  info("");
+
+  const changeN8n = await askYesNo("  Chceš nastavit / změnit n8n?", false);
+  if (changeN8n) {
+    const baseUrl = await ask(`  n8n Base URL (např. https://n8n.example.com) [${config.n8n.baseUrl || ""}]: `) || config.n8n.baseUrl || "";
+    const apiKey = await ask(`  n8n API klíč (volitelné) [${config.n8n.apiKey ? "***zachovat***" : ""}]: `) || config.n8n.apiKey || "";
+    const pathsInput = await ask(`  Povolené webhook paths (čárkou, např. /webhook/abc,/webhook/xyz) [${config.n8n.webhookPaths.join(",")}]: `);
+    const paths = pathsInput ? pathsInput.split(",").map(s => s.trim()).filter(Boolean) : config.n8n.webhookPaths;
+
+    config.n8n = { enabled: !!baseUrl, baseUrl, apiKey, webhookPaths: paths };
+    if (baseUrl) {
+      success(`n8n nastaven: ${baseUrl} (${paths.length} webhook paths)`);
+    } else {
+      success("n8n vypnut.");
     }
   }
 

@@ -114,7 +114,8 @@ function makeConfig(): PepagiConfig {
     queue: { maxConcurrentTasks: 4, taskTimeoutMs: 120_000 },
     customProviders: {},
     consciousness: { profile: "MINIMAL", enabled: true },
-    web: { enabled: false, port: 3100, host: "127.0.0.1" },
+    web: { enabled: false, port: 3100, host: "127.0.0.1", authToken: "" },
+    n8n: { enabled: false, baseUrl: "", webhookPaths: [], apiKey: "" },
   };
 }
 

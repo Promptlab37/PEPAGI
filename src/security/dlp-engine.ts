@@ -52,6 +52,18 @@ export interface DLPResult {
  * Inspects outbound data for exfiltration attempts.
  */
 export class DLPEngine {
+  /** Whitelisted domains — bypasses exfiltration check (e.g. user's n8n instance) */
+  private whitelistedDomains: Set<string> = new Set();
+
+  /** Add a domain to the whitelist (e.g. n8n base URL). */
+  addWhitelistedDomain(domain: string): void {
+    const clean = domain.toLowerCase().replace(/^https?:\/\//, "").replace(/[:/].*$/, "");
+    if (clean) {
+      this.whitelistedDomains.add(clean);
+      logger.info("SEC-11: Domain whitelisted for DLP", { domain: clean });
+    }
+  }
+
   /**
    * Inspect outbound data for exfiltration indicators.
    * @param data - The data being sent outbound (URL, body, etc.)
@@ -61,13 +73,17 @@ export class DLPEngine {
   inspect(data: string, destination: string): DLPResult {
     const issues: string[] = [];
 
-    // Check 1: Known exfiltration domains
+    // Check 1: Known exfiltration domains (skip whitelisted)
     try {
       const url = new URL(destination);
       const hostname = url.hostname.toLowerCase();
-      for (const domain of EXFIL_DOMAINS) {
-        if (hostname === domain || hostname.endsWith(`.${domain}`)) {
-          issues.push(`Known exfiltration domain: ${domain}`);
+      const isWhitelisted = this.whitelistedDomains.has(hostname) ||
+        [...this.whitelistedDomains].some(d => hostname.endsWith(`.${d}`));
+      if (!isWhitelisted) {
+        for (const domain of EXFIL_DOMAINS) {
+          if (hostname === domain || hostname.endsWith(`.${domain}`)) {
+            issues.push(`Known exfiltration domain: ${domain}`);
+          }
         }
       }
     } catch {

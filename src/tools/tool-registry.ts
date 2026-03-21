@@ -26,6 +26,8 @@ import { weatherTool } from "./weather.js";
 import { notionTool } from "./notion.js";
 import { dockerTool } from "./docker.js";
 import { pdfTool } from "./pdf.js";
+import { executeN8nWebhook } from "./n8n-webhook.js";
+import { loadConfig } from "../config/loader.js";
 
 /** Block shell injection in commands */
 function hasDangerousMetachars(cmd: string): boolean {
@@ -540,6 +542,16 @@ export class ToolRegistry {
       description: pdfTool.description,
       async execute(args: Record<string, string>, _taskId: string, _guard: SecurityGuard): Promise<ToolResult> {
         return pdfTool.execute(args);
+      },
+    });
+
+    // n8n webhook tool — sends payloads to user-configured n8n workflows
+    this.register({
+      name: "n8n_webhook",
+      description: "Send a payload to an n8n workflow webhook. Args: webhook_path (required), payload (JSON string), method (default POST).",
+      async execute(args: Record<string, string>, _taskId: string, _guard: SecurityGuard): Promise<ToolResult> {
+        const config = await loadConfig();
+        return executeN8nWebhook(args, config.n8n);
       },
     });
   }
