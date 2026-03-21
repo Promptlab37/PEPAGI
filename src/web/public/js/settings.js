@@ -713,16 +713,17 @@ function openWhatsAppQR() {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     min-height: 100vh; margin: 0; }
   h2 { font-size: 18px; margin-bottom: 8px; }
-  p { font-size: 13px; color: #888; margin: 4px 0 16px; }
+  p { font-size: 13px; color: #888; margin: 4px 0 16px; text-align: center; }
   #qr-canvas { background: #fff; padding: 16px; border-radius: 12px; }
+  .hidden { display: none; }
   .status { margin-top: 16px; font-size: 14px; }
   .connected { color: #4ade80; }
   .waiting { color: #fbbf24; }
 </style></head><body>
   <h2>📱 WhatsApp QR Code</h2>
   <p>Scan with WhatsApp → Linked Devices → Link a Device</p>
-  <canvas id="qr-canvas"></canvas>
-  <div class="status waiting" id="qr-status">⏳ Waiting for QR code...</div>
+  <canvas id="qr-canvas" class="hidden"></canvas>
+  <div class="status waiting" id="qr-status">⏳ Connecting to server...</div>
 </body></html>`);
   _qrWindow.document.close();
 
@@ -736,69 +737,69 @@ function openWhatsAppQR() {
   _qrWs.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
-      // Check init/state for existing QR
       if (msg.type === 'init' || msg.type === 'state') {
-        const qr = msg.state?.platforms?.whatsapp?.qrCode;
-        const connected = msg.state?.platforms?.whatsapp?.connected;
-        if (connected) {
-          showQRConnected();
-        } else if (qr) {
-          renderQR(qr);
-        }
-      }
-      // Check live events
-      if (msg.type === 'event' && msg.event?.eventType === 'platform:qr') {
-        // QR data is in state, re-fetch via next state broadcast
-      }
-      // State updates carry QR
-      if (msg.type === 'state') {
-        const qr = msg.state?.platforms?.whatsapp?.qrCode;
-        const connected = msg.state?.platforms?.whatsapp?.connected;
-        if (connected) {
-          showQRConnected();
-        } else if (qr) {
-          renderQR(qr);
-        }
+        handleWAState(msg.state?.platforms?.whatsapp);
       }
     } catch {}
   };
 
-  // Also check current state via REST
-  fetch('/api/state').then(r => r.json()).then(state => {
-    const wa = state.platforms?.whatsapp;
-    if (wa?.connected) showQRConnected();
-    else if (wa?.qrCode) renderQR(wa.qrCode);
-  }).catch(() => {});
+  _qrWs.onopen = () => {
+    // Also check current state via REST as fallback
+    fetch('/api/state').then(r => r.json()).then(state => {
+      handleWAState(state.platforms?.whatsapp);
+    }).catch(() => {});
+  };
 
   _qrWindow.addEventListener('beforeunload', () => {
     if (_qrWs) { try { _qrWs.close(); } catch {} _qrWs = null; }
   });
 }
 
+function handleWAState(wa) {
+  if (!wa || !_qrWindow || _qrWindow.closed) return;
+  if (wa.connected) {
+    showQRConnected();
+  } else if (wa.qrCode) {
+    renderQR(wa.qrCode);
+  } else if (wa.enabled) {
+    setQRStatus('⏳ WhatsApp is starting... QR code will appear here.', 'waiting');
+  } else {
+    setQRStatus('⚠️ WhatsApp is not enabled. Enable it in Settings and restart daemon.', '');
+  }
+}
+
 function renderQR(qrData) {
   if (!_qrWindow || _qrWindow.closed) return;
   const canvas = _qrWindow.document.getElementById('qr-canvas');
-  const status = _qrWindow.document.getElementById('qr-status');
   if (!canvas) return;
+
+  canvas.classList.remove('hidden');
 
   // Use QRCode library loaded in popup
   const QRCode = _qrWindow.QRCode;
   if (QRCode) {
     QRCode.toCanvas(canvas, qrData, { width: 300, margin: 2, color: { dark: '#000', light: '#fff' } }, (err) => {
-      if (err) { status.textContent = '❌ QR render error'; status.className = 'status'; }
-      else { status.textContent = '📲 Scan this QR code now!'; status.className = 'status waiting'; }
+      if (err) setQRStatus('❌ QR render error', '');
+      else setQRStatus('📲 Scan this QR code now!', 'waiting');
     });
   } else {
-    status.textContent = '❌ QR library not loaded';
+    setQRStatus('❌ QR library not loaded — check internet connection', '');
   }
 }
 
 function showQRConnected() {
   if (!_qrWindow || _qrWindow.closed) return;
+  const canvas = _qrWindow.document.getElementById('qr-canvas');
+  if (canvas) canvas.classList.add('hidden');
+  setQRStatus('✅ WhatsApp is connected!', 'connected');
+}
+
+function setQRStatus(text, className) {
+  if (!_qrWindow || _qrWindow.closed) return;
   const status = _qrWindow.document.getElementById('qr-status');
   if (status) {
-    status.textContent = '✅ WhatsApp connected!';
-    status.className = 'status connected';
+    status.textContent = text;
+    status.className = 'status' + (className ? ' ' + className : '');
   }
 }
 
