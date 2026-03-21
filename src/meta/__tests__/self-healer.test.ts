@@ -294,22 +294,44 @@ describe("SelfHealer.diagnose", () => {
     expect(diag.suggestedAction).toBe("force_gc");
   });
 
-  it("quick-diagnoses systemic failure when many errors", async () => {
+  it("quick-diagnoses systemic failure when many errors (>20)", async () => {
     const llm = makeMockLLM();
     const healer = new SelfHealer(llm, makeMockTaskStore([]), makeMockGuard(), makeConfig());
 
     // existsSync must return true for logs directory check
     mockExistsSync.mockReturnValue(true);
-    const errorLines = Array.from({ length: 10 }, (_, i) =>
+    const errorLines = Array.from({ length: 25 }, (_, i) =>
       JSON.stringify({ timestamp: new Date().toISOString(), level: "error", message: `Error ${i}` }),
     ).join("\n");
-    // readRecentErrors calls readRecentLogs internally, then diagnose calls readRecentLogs again
     mockReaddir.mockResolvedValue(["pepagi-2026-03-21.jsonl"]);
     mockReadFile.mockResolvedValue(errorLines);
 
     const ctx: HealContext = { trigger: "task:failed", message: "Some generic error", timestamp: Date.now() };
     const diag = await healer.diagnose(ctx);
-    expect(diag.suggestedAction).toBe("restart_daemon");
+    // Systemic failure now suggests kill_stuck_tasks, not restart_daemon (less aggressive)
+    expect(diag.suggestedAction).toBe("kill_stuck_tasks");
+
+    // Restore defaults
+    mockExistsSync.mockReturnValue(false);
+    mockReadFile.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+    mockReaddir.mockResolvedValue([]);
+  });
+
+  it("does NOT diagnose systemic failure with only 10 errors", async () => {
+    const llm = makeMockLLM();
+    const healer = new SelfHealer(llm, makeMockTaskStore([]), makeMockGuard(), makeConfig());
+
+    mockExistsSync.mockReturnValue(true);
+    const errorLines = Array.from({ length: 10 }, (_, i) =>
+      JSON.stringify({ timestamp: new Date().toISOString(), level: "error", message: `Error ${i}` }),
+    ).join("\n");
+    mockReaddir.mockResolvedValue(["pepagi-2026-03-21.jsonl"]);
+    mockReadFile.mockResolvedValue(errorLines);
+
+    const ctx: HealContext = { trigger: "task:failed", message: "Some generic error", timestamp: Date.now() };
+    const diag = await healer.diagnose(ctx);
+    // With only 10 errors, quickDiagnose returns null → falls through to LLM
+    expect(llm.quickCall).toHaveBeenCalled();
 
     // Restore defaults
     mockExistsSync.mockReturnValue(false);
@@ -559,7 +581,7 @@ describe("SelfHealer lifecycle", () => {
     healer.stop();
   });
 
-  it("responds to task:failed events", async () => {
+  it("responds to task:failed only after 5 consecutive failures", async () => {
     const config = makeConfig({ cooldownMs: 0 });
     const healer = new SelfHealer(makeMockLLM(), makeMockTaskStore([]), makeMockGuard(), config);
     healer.start();
@@ -570,7 +592,15 @@ describe("SelfHealer lifecycle", () => {
     };
     eventBus.onAny(handler);
 
-    eventBus.emit({ type: "task:failed", taskId: "t1", error: "Circuit breaker open" });
+    // First 4 failures should NOT trigger self-heal
+    for (let i = 0; i < 4; i++) {
+      eventBus.emit({ type: "task:failed", taskId: `t${i}`, error: "Circuit breaker open" });
+    }
+    await new Promise(r => setTimeout(r, 50));
+    expect(emittedEvents).toHaveLength(0);
+
+    // 5th failure triggers self-heal
+    eventBus.emit({ type: "task:failed", taskId: "t5", error: "Circuit breaker open" });
     await new Promise(r => setTimeout(r, 100));
 
     eventBus.offAny(handler);
@@ -578,6 +608,35 @@ describe("SelfHealer lifecycle", () => {
 
     expect(emittedEvents).toContain("self-heal:attempt");
     expect(emittedEvents).toContain("self-heal:success");
+  });
+
+  it("resets failure counter after gap > 2 min", async () => {
+    const config = makeConfig({ cooldownMs: 0 });
+    const healer = new SelfHealer(makeMockLLM(), makeMockTaskStore([]), makeMockGuard(), config);
+    healer.start();
+
+    // Simulate 4 failures then a gap
+    for (let i = 0; i < 4; i++) {
+      eventBus.emit({ type: "task:failed", taskId: `t${i}`, error: "test error" });
+    }
+    // Simulate time gap by resetting lastTaskFailureTs
+    // @ts-expect-error — accessing private for test
+    healer.lastTaskFailureTs = Date.now() - 130_000; // 2+ min ago
+
+    const emittedEvents: string[] = [];
+    const handler = (e: { type: string }) => {
+      if (e.type.startsWith("self-heal:")) emittedEvents.push(e.type);
+    };
+    eventBus.onAny(handler);
+
+    // Next failure resets counter → no trigger (only 1st after reset)
+    eventBus.emit({ type: "task:failed", taskId: "t5", error: "test error" });
+    await new Promise(r => setTimeout(r, 50));
+
+    eventBus.offAny(handler);
+    healer.stop();
+
+    expect(emittedEvents).toHaveLength(0);
   });
 
   it("responds to meta:watchdog_alert events", async () => {
@@ -631,9 +690,9 @@ describe("SelfHealer lifecycle", () => {
     const healer = new SelfHealer(makeMockLLM(), makeMockTaskStore([]), makeMockGuard(), config);
     healer.start();
 
-    // Trigger 3 heal events
+    // Use watchdog alerts instead of task:failed (no failure threshold for watchdog)
     for (let i = 0; i < 3; i++) {
-      eventBus.emit({ type: "task:failed", taskId: `t${i}`, error: "Circuit breaker open" });
+      eventBus.emit({ type: "meta:watchdog_alert", message: "Circuit breaker open" });
       await new Promise(r => setTimeout(r, 50));
     }
 

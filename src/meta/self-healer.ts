@@ -94,6 +94,13 @@ export class SelfHealer {
   private healAttempts: Array<{ ts: number; tier: number; success: boolean }> = [];
   private cooldownUntil = 0;
   private handler: ((e: PepagiEvent) => void) | null = null;
+  /** Track consecutive task failures — only trigger heal after threshold */
+  private consecutiveTaskFailures = 0;
+  private lastTaskFailureTs = 0;
+  /** Minimum consecutive task failures before self-healer activates (prevents reacting to normal failures) */
+  private static readonly TASK_FAILURE_THRESHOLD = 5;
+  /** Reset failure counter if gap between failures exceeds this (ms) */
+  private static readonly FAILURE_WINDOW_MS = 120_000; // 2 min
 
   constructor(
     private llm: LLMProvider,
@@ -114,7 +121,25 @@ export class SelfHealer {
 
     this.handler = (event: PepagiEvent) => {
       if (event.type === "task:failed") {
-        void this.onTrigger({ trigger: "task:failed", message: event.error, taskId: event.taskId, timestamp: Date.now() });
+        // Don't trigger on every single task failure — track consecutive failures
+        // and only activate after hitting the threshold. This prevents the self-healer
+        // from restarting the daemon when a few subtasks fail (normal operation).
+        const now = Date.now();
+        if (now - this.lastTaskFailureTs > SelfHealer.FAILURE_WINDOW_MS) {
+          this.consecutiveTaskFailures = 0; // reset if gap too large
+        }
+        this.lastTaskFailureTs = now;
+        this.consecutiveTaskFailures++;
+        if (this.consecutiveTaskFailures < SelfHealer.TASK_FAILURE_THRESHOLD) {
+          logger.debug("Task failure tracked but below threshold", {
+            consecutive: this.consecutiveTaskFailures,
+            threshold: SelfHealer.TASK_FAILURE_THRESHOLD,
+          });
+          return;
+        }
+        // Reset counter after triggering
+        this.consecutiveTaskFailures = 0;
+        void this.onTrigger({ trigger: "task:failed", message: event.error, taskId: event.taskId, timestamp: now });
       } else if (event.type === "meta:watchdog_alert") {
         void this.onTrigger({ trigger: "meta:watchdog_alert", message: event.message, timestamp: Date.now() });
       } else if (event.type === "system:alert" && event.level === "critical") {
@@ -178,10 +203,15 @@ export class SelfHealer {
       const diagnosis = await this.diagnose(ctx);
       eventBus.emit({ type: "self-heal:attempt", tier: diagnosis.suggestedTier, diagnosis: diagnosis.problem, taskId: ctx.taskId });
 
-      // Tier 1
-      const t1Result = await this.healTier1(diagnosis);
+      // Tier 1 (never start with restart_daemon — try safer actions first)
+      let effectiveDiagnosis = diagnosis;
+      if (diagnosis.suggestedAction === "restart_daemon") {
+        // Downgrade to kill_stuck_tasks first — restart_daemon is too aggressive as first action
+        effectiveDiagnosis = { ...diagnosis, suggestedAction: "kill_stuck_tasks" };
+      }
+      const t1Result = await this.healTier1(effectiveDiagnosis);
       this.recordAttempt(1, t1Result.success);
-      await this.persistLog({ tier: 1, trigger: ctx.trigger, diagnosis: diagnosis.problem, action: t1Result.action, success: t1Result.success, details: t1Result.details });
+      await this.persistLog({ tier: 1, trigger: ctx.trigger, diagnosis: effectiveDiagnosis.problem, action: t1Result.action, success: t1Result.success, details: t1Result.details });
 
       if (t1Result.success) {
         eventBus.emit({ type: "self-heal:success", tier: 1, action: t1Result.action });
@@ -292,8 +322,10 @@ Cost budget: $${costCap}. Be conservative — prefer Tier 1.`;
     }
 
     // Check if many recent errors share a pattern (systemic failure)
-    if (recentErrors.length > 5) {
-      return { problem: `Systemic failure: ${recentErrors.length} errors in 10 min`, suggestedTier: 1, suggestedAction: "restart_daemon", confidence: 0.6 };
+    // Threshold is high because normal task failures (worker fallback chain trying
+    // 3-4 providers) can easily generate 10+ error entries per task.
+    if (recentErrors.length > 20) {
+      return { problem: `Systemic failure: ${recentErrors.length} errors in 10 min`, suggestedTier: 1, suggestedAction: "kill_stuck_tasks", confidence: 0.6 };
     }
 
     return null;
