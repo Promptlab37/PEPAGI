@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Logger } from "../core/logger.js";
+import { eventBus } from "../core/event-bus.js";
 import type { PepagiConfig } from "../config/loader.js";
 import type { Mediator } from "../core/mediator.js";
 import type { TaskStore } from "../core/task-store.js";
@@ -69,20 +70,26 @@ export class PlatformManager {
       );
       await this.telegram.start();
       this.active.push("telegram");
+      eventBus.emit({ type: "platform:status", platform: "telegram", connected: true });
       logger.info("Telegram platform started");
     }
 
     if (whatsapp.enabled) {
-      this.whatsapp = new WhatsAppPlatform(
-        whatsapp.allowedNumbers,
-        this.mediator,
-        this.taskStore,
-        whatsappWelcome,
-        whatsapp.sessionPath,
-      );
-      await this.whatsapp.start();
-      this.active.push("whatsapp");
-      logger.info("WhatsApp platform started");
+      try {
+        this.whatsapp = new WhatsAppPlatform(
+          whatsapp.allowedNumbers,
+          this.mediator,
+          this.taskStore,
+          whatsappWelcome,
+          whatsapp.sessionPath,
+        );
+        await this.whatsapp.start();
+        this.active.push("whatsapp");
+        // Don't emit connected:true here — WhatsApp emits it from "ready" event after QR scan
+        logger.info("WhatsApp platform started");
+      } catch (err) {
+        logger.error("WhatsApp failed to start", { error: String(err) });
+      }
     }
 
     if (discord?.enabled && discord.botToken) {
@@ -96,6 +103,7 @@ export class PlatformManager {
       );
       await this.discord.start();
       this.active.push("discord");
+      eventBus.emit({ type: "platform:status", platform: "discord", connected: true });
       logger.info("Discord platform started");
     }
 
@@ -108,6 +116,7 @@ export class PlatformManager {
       );
       await this.imessage.start();
       this.active.push("imessage");
+      eventBus.emit({ type: "platform:status", platform: "imessage", connected: true });
       logger.info("iMessage platform started");
     }
 
@@ -126,6 +135,9 @@ export class PlatformManager {
     if (this.discord) stops.push(this.discord.stop());
     if (this.imessage) stops.push(this.imessage.stop());
     await Promise.allSettled(stops);
+    for (const name of this.active) {
+      eventBus.emit({ type: "platform:status", platform: name as "telegram" | "whatsapp" | "discord" | "imessage", connected: false });
+    }
     this.active = [];
     logger.info("All platforms stopped.");
   }
@@ -138,5 +150,12 @@ export class PlatformManager {
   /** Whether any platform is running. */
   hasActivePlatforms(): boolean {
     return this.active.length > 0;
+  }
+
+  /** Force WhatsApp to logout and re-authenticate (generates new QR). */
+  async reconnectWhatsApp(): Promise<void> {
+    if (this.whatsapp) {
+      await this.whatsapp.reconnect();
+    }
   }
 }

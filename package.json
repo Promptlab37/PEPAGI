@@ -39,7 +39,7 @@
   },
   "optionalDependencies": {
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.25.0"
+    "whatsapp-web.js": "^1.34.6"
   },
   "overrides": {
     "undici": ">=6.24.0",

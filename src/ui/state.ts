@@ -142,7 +142,7 @@ export interface DashboardState {
   // ── Platforms ────────────────────────────────────────────────
   platforms: {
     telegram: { enabled: boolean; connected: boolean; messageCount: number };
-    whatsapp: { enabled: boolean; connected: boolean; messageCount: number };
+    whatsapp: { enabled: boolean; connected: boolean; messageCount: number; qrCode?: string };
     discord:  { enabled: boolean; connected: boolean; messageCount: number };
   };
 

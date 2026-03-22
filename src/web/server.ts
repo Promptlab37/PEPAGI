@@ -61,6 +61,7 @@ export class WebDashboardServer {
   private readonly authToken: string;
   private pool: import("../agents/agent-pool.js").AgentPool | null;
   private llm: import("../agents/llm-provider.js").LLMProvider | null;
+  private _onWhatsAppReconnect: (() => Promise<void>) | null = null;
 
   constructor(
     private readonly taskStore: TaskStore,
@@ -91,6 +92,7 @@ export class WebDashboardServer {
       startTime: this.startTime,
       pool: this.pool ?? undefined,
       llm: this.llm ?? undefined,
+      onWhatsAppReconnect: () => this._onWhatsAppReconnect ? this._onWhatsAppReconnect() : Promise.reject(new Error("Not available")),
     };
 
     this.httpServer = createServer((req, res) => {
@@ -160,6 +162,11 @@ export class WebDashboardServer {
         reject(err);
       });
     });
+  }
+
+  /** Register callback for WhatsApp reconnect (called from daemon after platform init). */
+  setWhatsAppReconnect(fn: () => Promise<void>): void {
+    this._onWhatsAppReconnect = fn;
   }
 
   /** Stop the server. */
@@ -253,6 +260,23 @@ export class WebDashboardServer {
       }
       if (path === "/api/agent/kill" && req.method === "POST") {
         await handleKillAgent(deps, req, res);
+        return;
+      }
+      if (path === "/api/whatsapp/reconnect" && req.method === "POST") {
+        const sendJson = (code: number, data: unknown) => {
+          const body = JSON.stringify(data);
+          res.writeHead(code, { "Content-Type": "application/json" });
+          res.end(body);
+        };
+        if (deps.onWhatsAppReconnect) {
+          deps.onWhatsAppReconnect().then(() => {
+            sendJson(200, { ok: true });
+          }).catch((err) => {
+            sendJson(500, { error: String(err) });
+          });
+        } else {
+          sendJson(400, { error: "WhatsApp reconnect not available" });
+        }
         return;
       }
       if (path === "/api/google/auth" && req.method === "POST") {

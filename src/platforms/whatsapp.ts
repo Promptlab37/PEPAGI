@@ -6,6 +6,7 @@
 // This is an unofficial WhatsApp Web client. Use responsibly.
 
 import { Logger } from "../core/logger.js";
+import { eventBus } from "../core/event-bus.js";
 import type { Mediator } from "../core/mediator.js";
 import type { TaskStore } from "../core/task-store.js";
 import { ConversationMemory } from "../memory/conversation-memory.js";
@@ -75,23 +76,22 @@ export class WhatsAppPlatform {
   async start(): Promise<void> {
     logger.info("Starting WhatsApp platform...");
 
-    // Dynamic import — whatsapp-web.js is optional
-    let WWebJS: {
-      Client: new (opts: unknown) => unknown;
-      LocalAuth: new (opts?: unknown) => unknown;
-    };
+    // Dynamic import — whatsapp-web.js is optional (CJS module, exports on .default)
+    let Client: new (opts: unknown) => unknown;
+    let LocalAuth: new (opts?: unknown) => unknown;
     let qrcodeTerminal: { generate: (qr: string, opts: unknown) => void };
 
     try {
-      WWebJS = await import("whatsapp-web.js") as typeof WWebJS;
+      const wwMod = await import("whatsapp-web.js");
+      const ww = wwMod.default ?? wwMod;
+      Client = (ww as Record<string, unknown>).Client as typeof Client;
+      LocalAuth = (ww as Record<string, unknown>).LocalAuth as typeof LocalAuth;
       qrcodeTerminal = await import("qrcode-terminal") as typeof qrcodeTerminal;
     } catch {
       throw new Error(
         "WhatsApp dependencies missing. Run: npm install whatsapp-web.js qrcode-terminal"
       );
     }
-
-    const { Client, LocalAuth } = WWebJS;
 
     this.client = new Client({
       authStrategy: new LocalAuth({ dataPath: this.sessionPath }),
@@ -105,10 +105,9 @@ export class WhatsAppPlatform {
     const client = this.client as any;
 
     client.on("qr", (qr: string) => {
-      // AUDIT: use logger instead of console.log
       logger.info("WhatsApp — naskenuj QR kód svým telefonem");
+      eventBus.emit({ type: "platform:qr", platform: "whatsapp", qr });
       qrcodeTerminal.generate(qr, { small: true });
-      logger.info("Nebo otevři WhatsApp → Propojená zařízení → Přidat zařízení");
     });
 
     client.on("authenticated", () => {
@@ -117,6 +116,7 @@ export class WhatsAppPlatform {
 
     client.on("ready", async () => {
       logger.info("WhatsApp client ready ✓");
+      eventBus.emit({ type: "platform:status", platform: "whatsapp", connected: true });
     });
 
     client.on("auth_failure", (msg: string) => {
@@ -124,9 +124,22 @@ export class WhatsAppPlatform {
       logger.error("WhatsApp auth failed", { msg });
     });
 
-    client.on("message", async (msg: { from: string; body: string; fromMe: boolean }) => {
-      if (msg.fromMe) return; // Ignore own messages
+    // Track recently sent messages to avoid reacting to bot's own replies
+    const recentBotReplies = new Set<string>();
+    const botSend = async (to: string, text: string) => {
+      recentBotReplies.add(text.slice(0, 100));
+      // Auto-expire after 10s to prevent memory leak
+      setTimeout(() => recentBotReplies.delete(text.slice(0, 100)), 10_000);
+      await client.sendMessage(to, text);
+    };
+
+    client.on("message_create", async (msg: { from: string; to: string; body: string; fromMe: boolean; id: { _serialized: string } }) => {
+      // Skip messages with no body or internal markers
       if (!msg.body || msg.body.startsWith("_pepagi_")) return;
+      // If this is a bot reply we just sent, remember it and skip
+      if (msg.fromMe && recentBotReplies.delete(msg.body.slice(0, 100))) return;
+      // For non-self messages, skip own outgoing messages
+      if (msg.fromMe && msg.from !== msg.to) return;
 
       const from = msg.from;
 
@@ -141,19 +154,19 @@ export class WhatsAppPlatform {
       // Handle commands
       if (userMessage.toLowerCase() === "/start" || userMessage.toLowerCase() === "start") {
         this.conversations.delete(from);
-        await client.sendMessage(from, this.welcomeMessage);
+        await botSend(from, this.welcomeMessage);
         return;
       }
       if (userMessage.toLowerCase() === "/clear") {
         this.conversations.delete(from);
         // QUAL-04: also clear persistent ConversationMemory for this user
         await this.conversationMemory.clearHistory(from, "whatsapp");
-        await client.sendMessage(from, "🧹 Konverzace vymazána.");
+        await botSend(from, "🧹 Konverzace vymazána.");
         return;
       }
       if (userMessage.toLowerCase() === "/status") {
         const stats = this.taskStore.getStats();
-        await client.sendMessage(from,
+        await botSend(from,
           `📊 PEPAGI Status\nÚlohy: ${stats.total} | ✓ ${stats.completed} | ✗ ${stats.failed} | ⏳ ${stats.running}`
         );
         return;
@@ -190,17 +203,17 @@ export class WhatsAppPlatform {
 
         // WhatsApp has no strict char limit but split at 4000 to be safe
         if (result.length <= 4000) {
-          await client.sendMessage(from, result);
+          await botSend(from, result);
         } else {
           const chunks = result.match(/.{1,4000}/gs) ?? [result];
           for (const chunk of chunks) {
-            await client.sendMessage(from, chunk);
+            await botSend(from, chunk);
           }
         }
       } catch (err) {
         // SEC-12: log full error internally, send only a generic message to the user
         logger.error("WhatsApp task failed", { error: err instanceof Error ? err.message : String(err) });
-        await client.sendMessage(from, "Nastala interní chyba. Zkuste to prosím znovu.");
+        await botSend(from, "Nastala interní chyba. Zkuste to prosím znovu.");
       }
     });
 
@@ -212,5 +225,16 @@ export class WhatsAppPlatform {
       await this.client.destroy();
       logger.info("WhatsApp client stopped.");
     }
+  }
+
+  /** Logout and restart — forces new QR code generation. */
+  async reconnect(): Promise<void> {
+    if (this.client) {
+      try { await this.client.logout(); } catch {}
+      try { await this.client.destroy(); } catch {}
+      eventBus.emit({ type: "platform:status", platform: "whatsapp", connected: false });
+    }
+    logger.info("WhatsApp reconnecting — new QR code will be generated");
+    await this.start();
   }
 }

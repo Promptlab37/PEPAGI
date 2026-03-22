@@ -53,6 +53,8 @@ function describeEvent(e: PepagiEvent): string {
     case "planner:plan":       return `Planner [${e.level}]: ${e.steps} steps`;
     case "causal:node":        return `Causal: ${trunc(e.action, 40)} [${e.taskId.slice(0, 8)}]`;
     case "consciousness:qualia": return "Qualia update";
+    case "platform:status":      return `${e.platform} ${e.connected ? "connected" : "disconnected"}`;
+    case "platform:qr":          return `WhatsApp QR code available — scan to connect`;
     default:                   return JSON.stringify(e).slice(0, 100);
   }
 }
@@ -410,6 +412,21 @@ export class StateBridge {
         }
         // Don't log to event stream — too frequent
         entry.level = "debug";
+        break;
+      }
+      case "platform:status": {
+        const pKey = event.platform as keyof typeof this.state.platforms;
+        const pState = this.state.platforms[pKey];
+        if (pState) {
+          pState.connected = event.connected;
+          if (event.connected) pState.enabled = true;
+          // Clear QR code when connected
+          if (event.connected && "qrCode" in pState) pState.qrCode = undefined;
+        }
+        break;
+      }
+      case "platform:qr": {
+        this.state.platforms.whatsapp.qrCode = event.qr;
         break;
       }
     }
