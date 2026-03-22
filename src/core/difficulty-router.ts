@@ -161,25 +161,27 @@ Respond with ONLY the difficulty word, nothing else.`,
       ? ` [Qualia: frustrace=${qualia?.frustration?.toFixed(2)}/důvěra=${qualia?.confidence?.toFixed(2)} → preferuji jistější model]`
       : "";
 
-    // Prefer Ollama (free local model) for trivial/simple tasks when available and not frustrated
+    // Prefer Ollama or Kiro (free local providers) for trivial/simple tasks when available and not frustrated
     const ollamaAgent = available.find(a => a.provider === "ollama");
-    const preferOllama = ollamaAgent && !preferReliable;
+    const kiroAgent = available.find(a => a.provider === "kiro");
+    const preferLocal = (ollamaAgent || kiroAgent) && !preferReliable;
+    const localAgent: AgentProvider = ollamaAgent ? "ollama" : "kiro";
 
     switch (difficulty) {
       case "trivial":
         return {
-          difficulty, recommendedAgent: preferReliable ? reliableAgent : (preferOllama ? "ollama" : (bestAgent ?? safeAgent)),
+          difficulty, recommendedAgent: preferReliable ? reliableAgent : (preferLocal ? localAgent : (bestAgent ?? safeAgent)),
           useWorldModel: false, useSwarm: false, requiresVerification: false,
-          reasoning: preferOllama
-            ? `Trivial task — using free local Ollama (gemma3:12b)${qualiaNote}`
+          reasoning: preferLocal
+            ? `Trivial task — using free local ${localAgent === "ollama" ? "Ollama (gemma3:12b)" : "Kiro CLI (ACP)"}${qualiaNote}`
             : `Trivial task — cheapest agent, no overhead${qualiaNote}`,
         };
       case "simple":
         return {
-          difficulty, recommendedAgent: preferReliable ? routedAgent : (preferOllama ? "ollama" : routedAgent),
+          difficulty, recommendedAgent: preferReliable ? routedAgent : (preferLocal ? localAgent : routedAgent),
           useWorldModel: false, useSwarm: false, requiresVerification: preferReliable,
-          reasoning: preferOllama
-            ? `Simple task — using free local Ollama (gemma3:12b)${qualiaNote}`
+          reasoning: preferLocal
+            ? `Simple task — using free local ${localAgent === "ollama" ? "Ollama (gemma3:12b)" : "Kiro CLI (ACP)"}${qualiaNote}`
             : `Simple task — basic confidence check${qualiaNote}`,
         };
       case "medium":

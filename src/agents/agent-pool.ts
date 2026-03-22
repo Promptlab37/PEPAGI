@@ -6,7 +6,7 @@ import { networkInterfaces } from "node:os";
 import type { AgentProfile, AgentProvider } from "../core/types.js";
 import type { PepagiConfig } from "../config/loader.js";
 import { PRICING, registerCustomPricing } from "./pricing.js";
-import { checkOllamaHealth, checkLMStudioHealth, listOllamaModels, listLMStudioModels } from "./llm-provider.js";
+import { checkOllamaHealth, checkLMStudioHealth, checkKiroHealth, listOllamaModels, listLMStudioModels } from "./llm-provider.js";
 import { Logger } from "../core/logger.js";
 import { eventBus } from "../core/event-bus.js";
 
@@ -29,9 +29,10 @@ export class AgentPool {
       { provider: "gemini",    displayName: "Gemini (Google)",       defaultModel: "gemini-2.0-flash" },
       { provider: "ollama",    displayName: "Ollama (Local)",        defaultModel: "ollama/gemma3:12b" },
       { provider: "lmstudio",  displayName: "LM Studio (Local)",     defaultModel: "lmstudio/local-model" },
+      { provider: "kiro",      displayName: "Kiro CLI (ACP)",        defaultModel: "auto" },
     ];
 
-    const localProviders = new Set<string>(["ollama", "lmstudio"]);
+    const localProviders = new Set<string>(["ollama", "lmstudio", "kiro"]);
 
     for (const def of agentDefs) {
       // TS-01: unsafe cast bypassed type checking; use a typed helper to access
@@ -259,6 +260,15 @@ export class AgentPool {
         await this.checkLocalServiceExposure(1234, "LM Studio").catch(() => {});
       }
     }
+
+    const kiroProfile = this.agents.get("kiro");
+    if (kiroProfile?.available) {
+      const healthy = await checkKiroHealth();
+      if (!healthy) {
+        kiroProfile.available = false;
+        kiroProfile.displayName = "Kiro CLI (ACP — offline)";
+      }
+    }
   }
 
   getFallbackChain(preferred: AgentProvider): AgentProvider[] {
@@ -266,8 +276,8 @@ export class AgentPool {
     // Custom providers are explicitly configured by the user and should
     // ALWAYS come before built-in providers in the fallback chain.
     // This prevents slow fallback loops (e.g., trying Claude first when
-    // the user has deepinfra configured as their primary worker).
-    const builtIn = new Set<AgentProvider>(["claude", "gpt", "gemini", "ollama", "lmstudio"]);
+    // the user has a custom provider configured as their primary worker).
+    const builtIn = new Set<AgentProvider>(["claude", "gpt", "gemini", "ollama", "lmstudio", "kiro"]);
     const customNames: AgentProvider[] = [];
     for (const [name] of this.agents) {
       if (!builtIn.has(name)) customNames.push(name);

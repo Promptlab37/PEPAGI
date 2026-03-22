@@ -5,6 +5,7 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFile as fsReadFile, writeFile as fsWriteFile, readdir } from "node:fs/promises";
+import { loadConfig } from "../config/loader.js";
 import { duckduckgoSearch } from "../tools/web-search.js";
 import { pdfTool } from "../tools/pdf.js";
 import { existsSync } from "node:fs";
@@ -36,7 +37,7 @@ export interface ToolCall {
 }
 
 export interface LLMCallOptions {
-  provider: string;
+  provider: "claude" | "gpt" | "gemini" | "ollama" | "lmstudio" | "kiro";
   model: string;
   systemPrompt: string;
   messages: Array<{ role: "user" | "assistant"; content: string }>;
@@ -255,6 +256,117 @@ class ClaudeCodeCircuitBreaker {
 
 /** Exported singleton — Watchdog imports this to monitor Claude Code health */
 export const claudeCircuitBreaker = new ClaudeCodeCircuitBreaker();
+
+// ─── Kiro CLI Circuit Breaker ──────────────────────────────────
+
+/**
+ * Dedicated circuit breaker for Kiro CLI (ACP) — separate from Claude Code.
+ * Same threshold/window/reset pattern as ClaudeCodeCircuitBreaker.
+ */
+class KiroCircuitBreaker {
+  private failures: Date[] = [];
+  private state: "closed" | "open" | "half-open" = "closed";
+  private lastFailureTime: number | null = null;
+
+  private readonly THRESHOLD = 10;          // failures in window before opening
+  private readonly RESET_TIMEOUT = 300_000; // 5 min before trying half-open
+  private readonly WINDOW = 600_000;        // 10-min window for counting failures
+
+  async call<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.state === "open") {
+      const msSinceLastFailure = this.lastFailureTime ? Date.now() - this.lastFailureTime : Infinity;
+      if (msSinceLastFailure > this.RESET_TIMEOUT) {
+        this.state = "half-open";
+        logger.info("Kiro circuit breaker: HALF-OPEN — probing Kiro CLI...");
+        eventBus.emit({ type: "system:alert", message: "Kiro CLI recovery probe — circuit breaker HALF-OPEN", level: "warn" });
+      } else {
+        const waitSec = Math.round((this.RESET_TIMEOUT - msSinceLastFailure) / 1000);
+        throw new LLMProviderError(
+          "kiro", 503,
+          `Circuit breaker OPEN — Kiro CLI unavailable. Reset in ${waitSec}s.`,
+          false, // non-retryable
+        );
+      }
+    }
+
+    try {
+      const result = await fn();
+      this.reset();
+      return result;
+    } catch (e) {
+      this.recordFailure();
+      throw e;
+    }
+  }
+
+  private recordFailure(): void {
+    const now = new Date();
+    this.failures.push(now);
+    this.lastFailureTime = now.getTime();
+
+    // Prune failures outside the window + defensive size cap
+    const cutoff = Date.now() - this.WINDOW;
+    this.failures = this.failures.filter(f => f.getTime() > cutoff);
+    if (this.failures.length > 50) this.failures = this.failures.slice(-50);
+
+    if (this.failures.length >= this.THRESHOLD && this.state !== "open") {
+      this.state = "open";
+      const msg = `Kiro CLI failing — ${this.failures.length} errors in last 10 minutes. Circuit breaker OPEN.`;
+      logger.error(`[FATAL] Kiro circuit breaker OPEN (${this.failures.length} failures)`, {});
+      eventBus.emit({ type: "system:alert", message: msg, level: "warn" });
+    }
+  }
+
+  private reset(): void {
+    if (this.state !== "closed") {
+      logger.info("Kiro circuit breaker: CLOSED — Kiro CLI recovered");
+      eventBus.emit({ type: "system:alert", message: "Kiro CLI recovered — circuit breaker CLOSED", level: "warn" });
+    }
+    this.failures = [];
+    this.state = "closed";
+    this.lastFailureTime = null;
+  }
+
+  /** Number of failures in the last `windowMs` milliseconds */
+  getRecentFailureCount(windowMs = 600_000): number {
+    const cutoff = Date.now() - windowMs;
+    return this.failures.filter(f => f.getTime() > cutoff).length;
+  }
+
+  getState(): "closed" | "open" | "half-open" { return this.state; }
+
+  /** Force reset (e.g. after successful recovery) */
+  forceReset(): void { this.reset(); }
+}
+
+/** Exported singleton — separate from claudeCircuitBreaker */
+export const kiroCircuitBreaker = new KiroCircuitBreaker();
+
+// ─── ACP JSON-RPC 2.0 Helpers ─────────────────────────────────
+
+/** Parsed ACP JSON-RPC 2.0 message (response or notification) */
+export interface ACPMessage {
+  jsonrpc: "2.0";
+  id?: number;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: { code: number; message: string; data?: unknown };
+}
+
+/**
+ * Build a JSON-RPC 2.0 request string (newline-terminated).
+ * Automatically includes `protocolVersion: 1` for `initialize` requests.
+ */
+export function acpRequest(id: number, method: string, params: Record<string, unknown> = {}): string {
+  const msg: Record<string, unknown> = {
+    jsonrpc: "2.0",
+    id,
+    method,
+    params: method === "initialize" ? { protocolVersion: 1, ...params } : params,
+  };
+  return JSON.stringify(msg) + "\n";
+}
 
 // ─── Claude via direct API (when API key is provided) ──────────
 
@@ -2018,6 +2130,477 @@ async function callLMStudio(opts: LLMCallOptions): Promise<LLMResponse> {
   };
 }
 
+// ─── Kiro CLI via ACP (Agent Client Protocol) ────────────────
+
+/** Kiro-specific config (subset of PepagiConfig.agents.kiro) */
+interface KiroAgentConfig {
+  enabled: boolean;
+  model: string;
+  agent: string;
+  timeout: number;
+  forwardMcpServers: Array<{
+    name: string;
+    command: string;
+    args: string[];
+    env: Array<{ name: string; value: string }>;
+  }>;
+}
+
+/**
+ * Call Kiro CLI via ACP (Agent Client Protocol) over stdin/stdout.
+ * Spawns `kiro-cli acp` subprocess, performs ACP handshake, sends prompt,
+ * parses streaming session/update notifications, and returns standard LLMResponse.
+ *
+ * @param opts - Standard LLMCallOptions with provider="kiro"
+ * @param kiroConfig - Kiro-specific config (model, agent, timeout, forwardMcpServers)
+ * @returns LLMResponse with accumulated content, tool calls, usage, and latency
+ */
+async function callKiro(opts: LLMCallOptions, kiroConfig: KiroAgentConfig): Promise<LLMResponse> {
+  return kiroCircuitBreaker.call(async () => {
+    const start = performance.now();
+    const taskId = opts.taskId;
+
+    // Build spawn arguments
+    const args = ["acp"];
+    if (kiroConfig.agent) {
+      args.push("--agent", kiroConfig.agent);
+      logger.info(`callKiro: using custom agent "${kiroConfig.agent}"`, { taskId });
+    }
+    if (kiroConfig.model && kiroConfig.model !== "auto") {
+      args.push("--model", kiroConfig.model);
+    }
+
+    if (taskId) {
+      eventBus.emit({ type: "mediator:thinking", taskId, thought: `Kiro CLI: spawning kiro-cli acp (model=${kiroConfig.model})` });
+    }
+
+    // Build prompt content blocks: system prompt first, then each message
+    const contentBlocks: Array<{ type: string; text: string }> = [];
+    if (opts.systemPrompt) {
+      contentBlocks.push({ type: "text", text: opts.systemPrompt });
+    }
+    for (const msg of opts.messages) {
+      contentBlocks.push({ type: "text", text: msg.content });
+    }
+
+    // Compute prompt char count for fallback estimation
+    const promptChars = contentBlocks.reduce((sum, b) => sum + b.text.length, 0);
+
+    return new Promise<LLMResponse>((resolve, reject) => {
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn("kiro-cli", args, {
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch (err) {
+        reject(new LLMProviderError("kiro", 1, `Kiro CLI spawn failed: ${String(err)}`, false));
+        return;
+      }
+
+      // stdio guaranteed non-null with ["pipe", "pipe", "pipe"]
+      const stdin = child.stdin!;
+      const stdout = child.stdout!;
+      const stderrStream = child.stderr!;
+
+      let killed = false;
+      let settled = false;
+      let lineBuf = "";
+      let stderr = "";
+
+      // Accumulated response data
+      const textChunks: string[] = [];
+      const toolCalls: ToolCall[] = [];
+      let acpUsage: { input_tokens?: number; output_tokens?: number } | null = null;
+      let acpCost: number | null = null;
+
+      // JSON-RPC request id counter
+      let nextId = 1;
+
+      // Track which phase we're in
+      let sessionId = "";
+      let promptRequestId = 0;
+      let initializeRequestId = 0;
+      let sessionNewRequestId = 0;
+
+      const timeoutMs = opts.timeoutMs ?? (kiroConfig.timeout * 1000);
+      const timeoutSec = Math.round(timeoutMs / 1000);
+
+      // ── Cleanup helper ──
+      const cleanup = () => {
+        if (!killed) {
+          killed = true;
+          try { child.kill("SIGTERM"); } catch { /* already dead */ }
+          setTimeout(() => {
+            try { child.kill("SIGKILL"); } catch { /* already dead */ }
+          }, 5_000);
+        }
+        stdout.removeAllListeners();
+        stderrStream.removeAllListeners();
+        child.removeAllListeners();
+      };
+
+      const finish = (result: LLMResponse) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(initTimeout);
+        clearTimeout(overallTimeout);
+        cleanup();
+        resolve(result);
+      };
+
+      const fail = (err: LLMProviderError) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(initTimeout);
+        clearTimeout(overallTimeout);
+        cleanup();
+        reject(err);
+      };
+
+      // ── Initialize timeout (10s) ──
+      const initTimeout = setTimeout(() => {
+        fail(new LLMProviderError("kiro", 504, "ACP initialize timeout (10s)", true));
+      }, 10_000);
+
+      // ── Overall timeout ──
+      const overallTimeout = setTimeout(() => {
+        if (taskId) {
+          eventBus.emit({ type: "mediator:thinking", taskId, thought: `Kiro CLI timeout (${timeoutSec}s) — killing process` });
+        }
+        fail(new LLMProviderError("kiro", 504, `Kiro CLI timeout after ${timeoutSec}s`, true));
+      }, timeoutMs);
+
+      // ── Abort signal ──
+      if (opts.abortController) {
+        opts.abortController.signal.addEventListener("abort", () => {
+          // Send session/cancel, then SIGTERM, escalate to SIGKILL after 5s
+          if (!killed && !settled) {
+            try {
+              if (sessionId) {
+                stdin.write(acpRequest(nextId++, "session/cancel", { sessionId }));
+              }
+            } catch { /* stdin may be closed */ }
+            killed = true;
+            child.kill("SIGTERM");
+            setTimeout(() => {
+              try { child.kill("SIGKILL"); } catch { /* already dead */ }
+            }, 5_000);
+          }
+        }, { once: true });
+      }
+
+      // ── Write helper ──
+      const sendReq = (method: string, params: Record<string, unknown> = {}): number => {
+        const id = nextId++;
+        stdin.write(acpRequest(id, method, params));
+        return id;
+      };
+
+      // ── Parse stdout JSONL ──
+      stdout.on("data", (chunk: Buffer) => {
+        lineBuf += chunk.toString();
+        const lines = lineBuf.split("\n");
+        lineBuf = lines.pop() ?? "";
+
+        for (const raw of lines) {
+          const trimmed = raw.trim();
+          if (!trimmed || !trimmed.startsWith("{")) continue;
+
+          let msg: ACPMessage;
+          try {
+            msg = JSON.parse(trimmed) as ACPMessage;
+          } catch {
+            continue; // malformed JSON — skip
+          }
+
+          // ── Handle responses (has id) ──
+          if (msg.id !== undefined) {
+            // Check for errors
+            if (msg.error) {
+              const errMsg = msg.error.message ?? "ACP error";
+              const retryable = (msg.error.code ?? 0) >= 500;
+              fail(new LLMProviderError("kiro", msg.error.code ?? 1, errMsg, retryable));
+              return;
+            }
+
+            // Initialize response
+            if (msg.id === initializeRequestId && msg.result) {
+              clearTimeout(initTimeout);
+              // Send session/new
+              sessionNewRequestId = sendReq("session/new", {
+                cwd: process.cwd(),
+                mcpServers: kiroConfig.forwardMcpServers.map(s => ({
+                  name: s.name,
+                  command: s.command,
+                  args: s.args,
+                  env: s.env,
+                })),
+              });
+              continue;
+            }
+
+            // Session/new response
+            if (msg.id === sessionNewRequestId && msg.result) {
+              sessionId = (msg.result.sessionId as string) ?? "";
+              const modes = msg.result.modes as {
+                availableModes?: Array<{ id: string; description?: string }>;
+                currentModeId?: string;
+              } | undefined;
+
+              // Optionally set mode based on agenticMode
+              if (modes?.availableModes && modes.availableModes.length > 0) {
+                let targetModeId: string | null = null;
+
+                if (opts.agenticMode) {
+                  // Prefer mode containing "default" or matching agent name
+                  targetModeId = modes.availableModes.find(m =>
+                    m.id.includes("default") || (kiroConfig.agent && m.id.includes(kiroConfig.agent))
+                  )?.id ?? null;
+                } else {
+                  // Prefer mode containing "planner" or "readonly"
+                  targetModeId = modes.availableModes.find(m =>
+                    m.id.includes("planner") || m.id.includes("readonly")
+                  )?.id ?? null;
+                }
+
+                if (targetModeId && targetModeId !== modes.currentModeId) {
+                  sendReq("session/set_mode", { sessionId, modeId: targetModeId });
+                  if (taskId) {
+                    eventBus.emit({ type: "mediator:thinking", taskId, thought: `Kiro session mode: ${targetModeId}` });
+                  }
+                }
+              }
+
+              // Send prompt
+              promptRequestId = sendReq("session/prompt", {
+                sessionId,
+                prompt: contentBlocks,
+              });
+              continue;
+            }
+
+            // Prompt response (turn complete — has stopReason)
+            if (msg.id === promptRequestId && msg.result) {
+              const result = msg.result as {
+                stopReason?: string;
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                  total_tokens?: number;
+                };
+              };
+
+              // Extract usage from prompt response if available
+              if (result.usage) {
+                acpUsage = {
+                  input_tokens: result.usage.input_tokens,
+                  output_tokens: result.usage.output_tokens,
+                };
+              }
+
+              const latencyMs = performance.now() - start;
+              const content = textChunks.join("");
+
+              // Usage: prefer ACP data, fall back to char estimation
+              const inputTokens = acpUsage?.input_tokens ?? Math.ceil(promptChars / 4);
+              const outputTokens = acpUsage?.output_tokens ?? Math.ceil(content.length / 4);
+              const cost = acpCost ?? 0;
+
+              if (taskId) {
+                eventBus.emit({ type: "mediator:thinking", taskId, thought: `Kiro CLI finished (${Math.round(latencyMs)}ms)` });
+              }
+
+              logger.debug("callKiro completed", {
+                taskId,
+                latencyMs: Math.round(latencyMs),
+                contentLen: content.length,
+                toolCallCount: toolCalls.length,
+                inputTokens,
+                outputTokens,
+                cost,
+              });
+
+              finish({
+                content,
+                toolCalls,
+                usage: { inputTokens, outputTokens },
+                cost,
+                model: opts.model,
+                latencyMs,
+              });
+              return;
+            }
+
+            // set_mode response — no action needed, just continue
+            continue;
+          }
+
+          // ── Handle notifications (no id) ──
+          if (msg.method === "session/update" && msg.params) {
+            const update = msg.params.update as Record<string, unknown> | undefined;
+            if (!update) continue;
+
+            const sessionUpdate = update.sessionUpdate as string;
+
+            switch (sessionUpdate) {
+              case "agent_message_chunk": {
+                const contentObj = update.content as { text?: string } | undefined;
+                const text = contentObj?.text ?? "";
+                if (text) {
+                  textChunks.push(text);
+                  if (taskId) {
+                    eventBus.emit({ type: "mediator:thinking", taskId, thought: `💭 ${text.slice(0, 200)}` });
+                  }
+                }
+                break;
+              }
+
+              case "tool_call": {
+                const name = (update.name as string) ?? "unknown";
+                const input = (update.input as Record<string, unknown>) ?? {};
+                const id = (update.id as string) ?? `tc-${toolCalls.length}`;
+                toolCalls.push({ id, name, input });
+                if (taskId) {
+                  const detail = JSON.stringify(input).slice(0, 120);
+                  eventBus.emit({ type: "tool:call", taskId, tool: name, input });
+                  eventBus.emit({ type: "mediator:thinking", taskId, thought: `🔧 ${name}: ${detail}` });
+                }
+                break;
+              }
+
+              case "usage_update": {
+                const contextWindow = update.contextWindow as { used?: number; size?: number } | undefined;
+                const costObj = update.cost as { amount?: number } | undefined;
+                if (costObj?.amount !== undefined) {
+                  acpCost = costObj.amount;
+                }
+                if (contextWindow && taskId) {
+                  const pct = contextWindow.size ? Math.round((contextWindow.used ?? 0) / contextWindow.size * 100) : 0;
+                  eventBus.emit({ type: "mediator:thinking", taskId, thought: `Context: ${pct}% used (${contextWindow.used}/${contextWindow.size})` });
+                }
+                break;
+              }
+
+              default:
+                // Silently ignore _kiro.dev/* extension notifications and unknown types
+                break;
+            }
+            continue;
+          }
+
+          // Silently ignore other notifications (e.g., _kiro.dev/*)
+        }
+      });
+
+      // ── Collect stderr ──
+      stderrStream.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+
+      // ── Handle subprocess exit ──
+      child.on("close", (code) => {
+        if (settled) return;
+        const latencyMs = performance.now() - start;
+
+        if (code !== 0) {
+          const errMsg = stderr.trim() || `kiro-cli exited with code ${code}`;
+          fail(new LLMProviderError("kiro", code ?? 1, `Kiro CLI error: ${errMsg}`, true));
+          return;
+        }
+
+        // Process exited 0 but we never got a prompt response — assemble from what we have
+        const content = textChunks.join("");
+        const inputTokens = acpUsage?.input_tokens ?? Math.ceil(promptChars / 4);
+        const outputTokens = acpUsage?.output_tokens ?? Math.ceil(content.length / 4);
+
+        finish({
+          content,
+          toolCalls,
+          usage: { inputTokens, outputTokens },
+          cost: acpCost ?? 0,
+          model: opts.model,
+          latencyMs,
+        });
+      });
+
+      // ── Handle spawn errors (ENOENT, EACCES) ──
+      child.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "ENOENT") {
+          fail(new LLMProviderError(
+            "kiro", 1,
+            "Kiro CLI not installed — install kiro-cli and ensure it is on your PATH",
+            false,
+          ));
+        } else {
+          fail(new LLMProviderError("kiro", 1, `Kiro CLI spawn failed: ${err.message}`, false));
+        }
+      });
+
+      // ── Start ACP handshake: send initialize ──
+      initializeRequestId = sendReq("initialize", {});
+    });
+  });
+}
+
+/**
+ * Check if Kiro CLI is installed and responsive.
+ * Spawns `kiro-cli acp`, sends initialize, expects response within 5s.
+ * @returns true if Kiro CLI is available
+ */
+export async function checkKiroHealth(): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn("kiro-cli", ["acp"], { stdio: ["pipe", "pipe", "pipe"] });
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    const childStdout = child.stdout!;
+    const childStdin = child.stdin!;
+
+    const done = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill("SIGKILL"); } catch { /* already dead */ }
+      childStdout.removeAllListeners();
+      child.removeAllListeners();
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => done(false), 5_000);
+
+    let lineBuf = "";
+    childStdout.on("data", (chunk: Buffer) => {
+      lineBuf += chunk.toString();
+      const lines = lineBuf.split("\n");
+      lineBuf = lines.pop() ?? "";
+
+      for (const raw of lines) {
+        const trimmed = raw.trim();
+        if (!trimmed || !trimmed.startsWith("{")) continue;
+        try {
+          const msg = JSON.parse(trimmed) as ACPMessage;
+          if (msg.id !== undefined && msg.result) {
+            done(true);
+            return;
+          }
+        } catch { /* ignore */ }
+      }
+    });
+
+    child.on("error", () => done(false));
+    child.on("close", () => done(false));
+
+    // Send initialize request
+    childStdin.write(acpRequest(1, "initialize", {}));
+  });
+}
+
 // ─── Audio transcription helpers ──────────────────────────────
 
 async function transcribeWithWhisperAPI(audioBuffer: Buffer, apiKey: string, language: string): Promise<string> {
@@ -2143,6 +2726,17 @@ export class LLMProvider {
           return callOllama(opts);
         case "lmstudio":
           return callLMStudio(opts);
+        case "kiro": {
+          const cfg = await loadConfig();
+          const kiroConfig: KiroAgentConfig = {
+            enabled: cfg.agents.kiro?.enabled ?? false,
+            model: cfg.agents.kiro?.model ?? opts.model,
+            agent: cfg.agents.kiro?.agent ?? "",
+            timeout: cfg.agents.kiro?.timeout ?? 120,
+            forwardMcpServers: cfg.agents.kiro?.forwardMcpServers ?? [],
+          };
+          return callKiro(opts, kiroConfig);
+        }
         default: {
           // Check if it's a registered custom OpenAI-compatible provider
           const custom = this._customProviders.get(opts.provider);

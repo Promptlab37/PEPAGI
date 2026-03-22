@@ -35,6 +35,9 @@ export const PRICING: ModelPricing[] = [
   { model: "ollama/phi4",            provider: "ollama", inputCostPer1M: 0,     outputCostPer1M: 0,     contextWindow: 16_000,    supportsTools: false },
   { model: "ollama/deepseek-r1",     provider: "ollama", inputCostPer1M: 0,     outputCostPer1M: 0,     contextWindow: 64_000,    supportsTools: false },
   { model: "ollama/qwen2.5",         provider: "ollama", inputCostPer1M: 0,     outputCostPer1M: 0,     contextWindow: 128_000,   supportsTools: false },
+
+  // Kiro CLI — managed provider, cost tracked via ACP usage_update
+  { model: "auto",                   provider: "kiro",   inputCostPer1M: 0,     outputCostPer1M: 0,     contextWindow: 200_000,   supportsTools: true },
 ];
 
 /** O(1) lookup map built from PRICING array */
