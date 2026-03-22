@@ -262,14 +262,18 @@ export class AgentPool {
   }
 
   getFallbackChain(preferred: AgentProvider): AgentProvider[] {
-    // Smart fallback order: preferred → custom providers → built-in providers.
-    // Custom providers come first because they're explicitly configured by the user
-    // and are more likely to work than built-in providers without API keys.
-    const builtIn: AgentProvider[] = ["claude", "gpt", "gemini", "ollama", "lmstudio"];
+    // Priority: preferred → custom providers → built-in providers.
+    // Custom providers are explicitly configured by the user and should
+    // ALWAYS come before built-in providers in the fallback chain.
+    // This prevents slow fallback loops (e.g., trying Claude first when
+    // the user has deepinfra configured as their primary worker).
+    const builtIn = new Set<AgentProvider>(["claude", "gpt", "gemini", "ollama", "lmstudio"]);
     const customNames: AgentProvider[] = [];
     for (const [name] of this.agents) {
-      if (!builtIn.includes(name)) customNames.push(name);
+      if (!builtIn.has(name)) customNames.push(name);
     }
+
+    // Build order: preferred first, then all custom, then built-in
     const order: AgentProvider[] = [preferred, ...customNames, ...builtIn];
     const seen = new Set<AgentProvider>();
     const chain: AgentProvider[] = [];
@@ -280,6 +284,22 @@ export class AgentPool {
       if (profile?.available) chain.push(p);
     }
     return chain;
+  }
+
+  /** Check if a provider is custom (not built-in) */
+  isCustomProvider(provider: AgentProvider): boolean {
+    const builtIn = new Set(["claude", "gpt", "gemini", "ollama", "lmstudio"]);
+    return !builtIn.has(provider);
+  }
+
+  /** Get the first available custom provider, if any */
+  getPreferredCustomProvider(): AgentProfile | null {
+    for (const [name, profile] of this.agents) {
+      if (this.isCustomProvider(name) && profile.available && !this.isRateLimited(name)) {
+        return profile;
+      }
+    }
+    return null;
   }
 
   /** Disable an agent at runtime (removes from available pool). */

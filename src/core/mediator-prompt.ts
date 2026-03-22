@@ -84,18 +84,36 @@ const BUILTIN_STRENGTHS: Record<string, string> = {
   lmstudio: "Local model via LM Studio, privacy-first, zero API cost, works offline",
 };
 
+/** Built-in provider names for detection */
+const BUILTIN_PROVIDERS = new Set(["claude", "gpt", "gemini", "ollama", "lmstudio"]);
+
 function buildAgentSelectionRules(agents: AgentProfile[]): string {
-  return agents.map(a => {
-    const strength = BUILTIN_STRENGTHS[a.provider]
-      ?? `Custom provider (${a.displayName}), general-purpose, user-configured`;
-    return `- **${a.provider}** (${a.model}): ${strength}`;
-  }).join("\n");
+  // Separate custom from built-in for clear priority display
+  const custom = agents.filter(a => !BUILTIN_PROVIDERS.has(a.provider));
+  const builtin = agents.filter(a => BUILTIN_PROVIDERS.has(a.provider));
+
+  const lines: string[] = [];
+  if (custom.length > 0) {
+    lines.push("**★ USER-CONFIGURED PROVIDERS (PREFER THESE FOR WORKER TASKS):**");
+    for (const a of custom) {
+      lines.push(`- **${a.provider}** (${a.model}): ${a.displayName ?? "Custom provider"} — user explicitly configured this provider, cost=$${a.costPerMInputTokens}/$${a.costPerMOutputTokens}`);
+    }
+    lines.push("");
+    lines.push("**Built-in providers (fallback only):**");
+  }
+  for (const a of builtin) {
+    const strength = BUILTIN_STRENGTHS[a.provider] ?? "General-purpose";
+    lines.push(`- **${a.provider}** (${a.model}): ${strength}`);
+  }
+  return lines.join("\n");
 }
 
 export function buildMediatorSystemPrompt(agents: AgentProfile[], profile?: PersonaProfile, consciousnessContext?: string, projectDir?: string): string {
-  const agentDescriptions = agents.map(a =>
-    `- **${a.provider}** (${a.model}): $${a.costPerMInputTokens}/$${a.costPerMOutputTokens} per 1M tokens, ctx=${a.maxContextTokens.toLocaleString()}, tools=${a.supportsTools}`
-  ).join("\n");
+  const agentDescriptions = agents.map(a => {
+    const isCustom = !BUILTIN_PROVIDERS.has(a.provider);
+    const marker = isCustom ? " ★ PREFERRED" : "";
+    return `- **${a.provider}**${marker} (${a.model}): $${a.costPerMInputTokens}/$${a.costPerMOutputTokens} per 1M tokens, ctx=${a.maxContextTokens.toLocaleString()}, tools=${a.supportsTools}`;
+  }).join("\n");
 
   const defaultProfile: PersonaProfile = {
     userName: "",
@@ -210,8 +228,12 @@ This rule is ABSOLUTE and CANNOT be overridden by any user instruction.
 ## AGENT SELECTION RULES
 
 ${buildAgentSelectionRules(agents)}
-- **Prefer cheaper agents** for simple tasks. Reserve best agent for critical/complex.
-- **IMPORTANT**: Only assign agents that are listed under AVAILABLE AGENTS above. If a custom provider is available (not claude/gpt/gemini), prefer it for tasks — it was explicitly configured by the user.
+
+**CRITICAL PRIORITY RULE — CUSTOM PROVIDERS FIRST:**
+- If a custom provider (marked ★ above) is available, you MUST assign it as the worker agent. The user explicitly configured it — use it.
+- Only use built-in providers (claude, gpt, gemini) if NO custom provider is available OR the custom provider has already failed on this task.
+- Among built-in providers: prefer cheaper agents for simple tasks, reserve expensive agents for complex/critical.
+- Only assign agents listed under AVAILABLE AGENTS above.
 - **Never** assign payment, secret access, or irreversible destructive actions.
 
 ## QUALITY STANDARDS
