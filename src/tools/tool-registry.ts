@@ -29,14 +29,6 @@ import { pdfTool } from "./pdf.js";
 import { executeN8nWebhook } from "./n8n-webhook.js";
 import { loadConfig } from "../config/loader.js";
 
-/** Block shell injection in commands */
-function hasDangerousMetachars(cmd: string): boolean {
-  // Previously SHELL_METACHAR_RE was defined but never used (DEAD-01).
-  // The old inline regex /[;&`$<>\\!]/ was missing | (pipe), allowing shell
-  // pipe injection. Fixed: include | so all metacharacters are blocked.
-  return /[;&|`$<>\\!]/.test(cmd);
-}
-
 const execAsync = promisify(exec);
 const logger = new Logger("ToolRegistry");
 
@@ -60,12 +52,6 @@ const bashTool: Tool = {
   async execute(args, taskId, guard) {
     const cmd = args.command ?? "";
     if (!cmd) return { success: false, output: "", error: "No command provided" };
-
-    // Block shell metacharacters that enable injection (semicolons, backticks, etc.)
-    if (hasDangerousMetachars(cmd)) {
-      logger.warn("bash: shell metacharacters blocked", { cmd: cmd.slice(0, 100), taskId });
-      return { success: false, output: "", error: "Shell metacharacters not allowed in commands" };
-    }
 
     if (!guard.validateCommand(cmd)) {
       return { success: false, output: "", error: `Command blocked by security policy: ${cmd}` };

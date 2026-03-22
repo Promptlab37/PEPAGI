@@ -151,10 +151,15 @@ export class TaskStore {
     const task = this.tasks.get(id);
     if (!task) return;
     task.output = output;
-    task.status = "completed";
+    task.status = output.success ? "completed" : "failed";
     task.completedAt = new Date();
     task.confidence = output.confidence;
-    eventBus.emit({ type: "task:completed", taskId: id, output, cost: task.estimatedCost, agent: task.assignedTo ?? undefined });
+    if (output.success) {
+      eventBus.emit({ type: "task:completed", taskId: id, output, cost: task.estimatedCost, agent: task.assignedTo ?? undefined });
+    } else {
+      task.lastError = output.summary ?? "Task failed";
+      eventBus.emit({ type: "task:failed", taskId: id, error: output.summary ?? "Task failed" });
+    }
     this.scheduleSave();
   }
 

@@ -273,7 +273,7 @@ describe("Mediator — processTask basics", () => {
     expect(output.summary).toBe("Insufficient information");
 
     const updated = taskStore.get(task.id);
-    expect(updated?.status).toBe("completed"); // mediator calls taskStore.complete() even for fail
+    expect(updated?.status).toBe("failed"); // taskStore.complete() now respects output.success
   });
 
   it("processTask throws when task ID does not exist", async () => {
