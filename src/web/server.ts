@@ -17,6 +17,7 @@ import {
   handleGetConfig, handlePutConfig, handleTestAgent,
   handleGetMemory, handleGetAudit, handleGetCausal, handleGetSkills,
   handleToggleAgent, handleKillAgent,
+  handleGoogleAuthStart, handleGoogleAuthStatus,
   type RestDeps,
 } from "./rest-api.js";
 
@@ -276,6 +277,14 @@ export class WebDashboardServer {
         } else {
           sendJson(400, { error: "WhatsApp reconnect not available" });
         }
+        return;
+      }
+      if (path === "/api/google/auth" && req.method === "POST") {
+        await handleGoogleAuthStart(deps, req, res);
+        return;
+      }
+      if (path === "/api/google/auth/status" && req.method === "GET") {
+        await handleGoogleAuthStatus(deps, req, res);
         return;
       }
 

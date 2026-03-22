@@ -139,17 +139,23 @@ export class MemorySystem {
       logger.warn("Failed to store episode", { taskId: task.id, error: String(err) });
     }
 
-    // Level 3: Extract facts (only for successful tasks)
+    // Level 3: Extract facts (from successes) or failure lessons (from failures)
     if (output.success) {
       try {
         await this.extractFacts(task, output);
       } catch (err) {
         logger.debug("Fact extraction failed", { error: String(err) });
       }
+    } else if (output.summary) {
+      try {
+        await this.extractFailureLessons(task, output);
+      } catch (err) {
+        logger.debug("Failure lesson extraction failed", { error: String(err) });
+      }
     }
 
-    // Level 4: Check if this should become a procedure
-    if (output.success && task.attempts <= 2) {
+    // Level 4: Check if this should become a procedure (relaxed: any successful task)
+    if (output.success && task.attempts <= task.maxAttempts) {
       try {
         await this.maybeCreateProcedure(task, output);
       } catch (err) {
@@ -200,6 +206,46 @@ export class MemorySystem {
     }
   }
 
+  /** Extract lessons from failed tasks using cheap LLM */
+  private async extractFailureLessons(task: Task, output: TaskOutput): Promise<void> {
+    const summary = output.summary || "";
+    const errorInfo = task.lastError || "";
+    const combined = `${summary} ${errorInfo}`.trim();
+    if (combined.length < 20) return;
+
+    const response = await this.llm.quickClaude(
+      "You extract lessons from failed AI tasks. Extract 1-2 specific facts about what doesn't work and why. " +
+      "Return ONLY a JSON array: [{\"fact\": \"...\", \"confidence\": 0.4-0.8}]. If nothing useful, return [].",
+      `Task: "${task.title}"\nFailure: ${combined.slice(0, 800)}\n\nWhat specific lesson can we learn from this failure?`,
+      CHEAP_CLAUDE_MODEL,
+      true,
+    );
+
+    try {
+      const lessons = parseLLMJson(response.content);
+      if (!Array.isArray(lessons)) return;
+
+      for (const lesson of lessons) {
+        if (typeof lesson === "object" && lesson !== null && "fact" in lesson) {
+          const fact = String((lesson as { fact: string }).fact);
+          const confidence = typeof (lesson as { confidence?: number }).confidence === "number"
+            ? Math.min(0.8, Math.max(0.4, (lesson as { confidence: number }).confidence))
+            : 0.5;
+          if (fact.length > 10) {
+            await this.semantic.addFact({
+              fact,
+              source: task.id,
+              confidence,
+              tags: [...task.tags, "failure-lesson"],
+            });
+          }
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+
   /** Create a procedure if task type repeats */
   private async maybeCreateProcedure(task: Task, output: TaskOutput): Promise<void> {
     // Skip procedure creation when satisfied/stable — system already knows this approach well
@@ -213,7 +259,7 @@ export class MemorySystem {
     const similar = await this.episodic.search(task.title, 5);
     const successfulSimilar = similar.filter(e => e.success && e.id !== task.id);
 
-    if (successfulSimilar.length >= 2) {
+    if (successfulSimilar.length >= 1) {
       // Create a simple procedure
       const steps = output.summary
         .split(/[.!]/)

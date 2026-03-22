@@ -34,6 +34,7 @@
       <button class="tab-btn" data-tab="security">Security</button>
       <button class="tab-btn" data-tab="queue">Queue</button>
       <button class="tab-btn" data-tab="consciousness">Consciousness</button>
+      <button class="tab-btn" data-tab="google">Google</button>
     </nav>
 
     <!-- Status bar -->
@@ -167,6 +168,39 @@
             <label for="consciousnessEnabled">Consciousness Enabled</label>
             <label class="toggle"><input type="checkbox" id="consciousnessEnabled"><span class="toggle-slider"></span></label>
           </div>
+        </div>
+      </section>
+
+      <!-- Google -->
+      <section class="tab-panel" id="tab-google">
+        <h2 class="section-title">Google OAuth2</h2>
+        <p style="color:var(--dim);margin-bottom:1rem;font-size:0.85rem">
+          Required for Gmail, Google Calendar, and Google Drive integration.
+          Create OAuth2 credentials at
+          <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--cyan)">Google Cloud Console</a>.
+          Set redirect URI to <code>http://localhost:3101/callback</code>.
+        </p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="googleClientId">Client ID</label>
+            <input type="text" id="googleClientId" class="form-input" placeholder="xxx.apps.googleusercontent.com">
+          </div>
+          <div class="form-group">
+            <label for="googleClientSecret">Client Secret</label>
+            <input type="password" id="googleClientSecret" class="form-input" placeholder="GOCSPX-xxx">
+          </div>
+          <div class="form-group toggle-group">
+            <label for="googleEnabled">Google Integration Enabled</label>
+            <label class="toggle"><input type="checkbox" id="googleEnabled"><span class="toggle-slider"></span></label>
+          </div>
+        </div>
+        <div style="margin-top:1.5rem">
+          <div id="google-auth-status" class="form-hint" style="margin-bottom:0.5rem">
+            Checking authentication status...
+          </div>
+          <button id="google-connect-btn" class="btn-save" style="width:auto;padding:8px 20px">
+            Connect Google Account
+          </button>
         </div>
       </section>
     </div>

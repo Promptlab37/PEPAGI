@@ -64,6 +64,7 @@
     <section id="panel-tasks" class="panel">
       <div class="panel-header">
         <span class="panel-icon">&#9654;</span> Pipeline
+        <button id="task-view-toggle" class="view-toggle-btn" title="Toggle Table/Kanban view" onclick="window.__toggleTaskView && window.__toggleTaskView()">&#9638; Kanban</button>
       </div>
       <div class="panel-body" id="tasks-body">
         <table class="data-table" id="tasks-table">
@@ -80,6 +81,28 @@
           </thead>
           <tbody id="tasks-tbody"></tbody>
         </table>
+        <div id="kanban-board" class="kanban-board" style="display:none">
+          <div class="kanban-col" data-status="todo">
+            <div class="kanban-col-header kanban-header-todo">TODO</div>
+            <div class="kanban-col-body" id="kanban-todo"></div>
+          </div>
+          <div class="kanban-col" data-status="doing">
+            <div class="kanban-col-header kanban-header-doing">DOING</div>
+            <div class="kanban-col-body" id="kanban-doing"></div>
+          </div>
+          <div class="kanban-col" data-status="review">
+            <div class="kanban-col-header kanban-header-review">REVIEW</div>
+            <div class="kanban-col-body" id="kanban-review"></div>
+          </div>
+          <div class="kanban-col" data-status="done">
+            <div class="kanban-col-header kanban-header-done">DONE</div>
+            <div class="kanban-col-body" id="kanban-done"></div>
+          </div>
+          <div class="kanban-col" data-status="failed">
+            <div class="kanban-col-header kanban-header-failed">FAILED</div>
+            <div class="kanban-col-body" id="kanban-failed"></div>
+          </div>
+        </div>
         <div id="tasks-empty" class="empty-state">No tasks yet. Submit one above.</div>
       </div>
     </section>

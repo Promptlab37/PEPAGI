@@ -633,6 +633,39 @@ async function setup(): Promise<void> {
     }
   }
 
+  // ─── KROK 10: Google OAuth2 ──────────────────────────────
+
+  header("KROK 10: Google OAuth2 (volitelné)");
+  info("Pro Gmail, Google Calendar a Google Drive je potřeba OAuth2.");
+  info("Vytvoř OAuth2 client ID na https://console.cloud.google.com/apis/credentials");
+  info("Redirect URI: http://localhost:3101/callback");
+  info("");
+
+  const existingGoogle = (config as unknown as Record<string, unknown>).google as { enabled?: boolean; clientId?: string; clientSecret?: string } | undefined;
+  const hasGoogle = !!(existingGoogle?.clientId && existingGoogle?.clientSecret);
+  if (hasGoogle) {
+    info(`Stav: Google OAuth2 ${chalk.green("nakonfigurováno")}`);
+  }
+
+  const setupGoogle = await askYesNo("  Chceš nakonfigurovat Google OAuth2?", !hasGoogle);
+  if (setupGoogle) {
+    const existClientId = existingGoogle?.clientId ?? process.env.GOOGLE_CLIENT_ID ?? "";
+    if (existClientId) info(`  (aktuální: ${existClientId.slice(0, 20)}...)`);
+    const clientId = await ask("  Google Client ID: ");
+    const clientSecret = await ask("  Google Client Secret: ");
+    const finalClientId = clientId || existClientId;
+    const finalClientSecret = clientSecret || (existingGoogle?.clientSecret ?? "");
+
+    if (finalClientId && finalClientSecret) {
+      (config as unknown as Record<string, unknown>).google = { enabled: true, clientId: finalClientId, clientSecret: finalClientSecret };
+      success("Google OAuth2 nakonfigurováno.");
+      info("Při prvním použití Gmail/Drive/Calendar se otevře prohlížeč pro autorizaci.");
+    } else {
+      warn("Client ID nebo Secret chybí — Google OAuth2 nebude aktivní.");
+      (config as unknown as Record<string, unknown>).google = { enabled: false, clientId: "", clientSecret: "" };
+    }
+  }
+
   // ─── Uložit ────────────────────────────────────────────────
 
   header("UKLÁDÁM KONFIGURACI");

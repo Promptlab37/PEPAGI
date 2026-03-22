@@ -40,6 +40,7 @@ const mockConfig: PepagiConfig = {
   web: { enabled: false, port: 3100, host: "127.0.0.1", authToken: "" },
   n8n: { enabled: false, baseUrl: "", webhookPaths: [], apiKey: "" },
   selfHealing: { enabled: false, maxAttemptsPerHour: 3, cooldownMs: 300_000, costCapPerAttempt: 0.50, allowCodeFixes: false },
+  google: { enabled: false, clientId: "", clientSecret: "" },
 };
 
 describe("SecurityGuard.sanitize", () => {
@@ -147,5 +148,46 @@ describe("SecurityGuard.authorize", () => {
     const guard = new SecurityGuard(mockConfig);
     const allowed = await guard.authorize("task1", "secret_access", "read vault");
     expect(allowed).toBe(false);
+  });
+
+  it("allows network_external (daemon auto-allow)", async () => {
+    const guard = new SecurityGuard(mockConfig);
+    const allowed = await guard.authorize("task1", "network_external", "fetch url");
+    expect(allowed).toBe(true);
+  });
+
+  it("blocks file_delete when requiresApproval (not in auto-allow)", async () => {
+    const guard = new SecurityGuard(mockConfig);
+    const allowed = await guard.authorize("task1", "file_delete", "delete /tmp/file");
+    expect(allowed).toBe(false);
+  });
+
+  it("blocks file_write_system when requiresApproval (not in auto-allow)", async () => {
+    const guard = new SecurityGuard(mockConfig);
+    const allowed = await guard.authorize("task1", "file_write_system", "write /etc/config");
+    expect(allowed).toBe(false);
+  });
+
+  it("allows actions not in requireApproval list", async () => {
+    const guard = new SecurityGuard(mockConfig);
+    // docker_manage is not in requireApproval
+    const allowed = await guard.authorize("task1", "docker_manage", "start container");
+    expect(allowed).toBe(true);
+  });
+});
+
+describe("SecurityGuard.validateCommand — bypass prevention", () => {
+  const guard = new SecurityGuard(mockConfig);
+
+  it("blocks rm -r -f / (flag-splitting bypass)", () => {
+    expect(guard.validateCommand("rm -r -f /")).toBe(false);
+  });
+
+  it("blocks sudo rm -rf /", () => {
+    expect(guard.validateCommand("sudo rm -rf /")).toBe(false);
+  });
+
+  it("blocks rm -f -r /", () => {
+    expect(guard.validateCommand("rm -f -r /")).toBe(false);
   });
 });

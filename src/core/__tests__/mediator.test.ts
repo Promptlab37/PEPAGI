@@ -78,7 +78,7 @@ import type { AgentPool } from "../../agents/agent-pool.js";
 import type { SecurityGuard } from "../../security/security-guard.js";
 import type { PepagiConfig } from "../../config/loader.js";
 import type { MemorySystem } from "../../memory/memory-system.js";
-import type { Task, TaskOutput } from "../types.js";
+import type { Task, TaskOutput, RecoveryInfo, RecoveryLearning } from "../types.js";
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -117,6 +117,7 @@ function makeConfig(): PepagiConfig {
     web: { enabled: false, port: 3100, host: "127.0.0.1", authToken: "" },
     n8n: { enabled: false, baseUrl: "", webhookPaths: [], apiKey: "" },
     selfHealing: { enabled: false, maxAttemptsPerHour: 3, cooldownMs: 300_000, costCapPerAttempt: 0.50, allowCodeFixes: false },
+    google: { enabled: false, clientId: "", clientSecret: "" },
   };
 }
 
@@ -273,7 +274,7 @@ describe("Mediator — processTask basics", () => {
     expect(output.summary).toBe("Insufficient information");
 
     const updated = taskStore.get(task.id);
-    expect(updated?.status).toBe("completed"); // mediator calls taskStore.complete() even for fail
+    expect(updated?.status).toBe("failed"); // taskStore.complete() now respects output.success
   });
 
   it("processTask throws when task ID does not exist", async () => {
@@ -798,5 +799,135 @@ describe("Mediator — assign decision with worker", () => {
     // The WorkerExecutor module mock returns success with "worker result"
     expect(output.success).toBe(true);
     expect(output.result).toBe("worker result");
+  });
+});
+
+describe("Mediator — recovery-aware evaluation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("ESCALATED recovery → immediate failure, no retry", async () => {
+    const assignDecision = {
+      action: "assign",
+      reasoning: "Assigning to claude",
+      confidence: 0.9,
+      assignment: { agent: "claude", reason: "Best agent", prompt: "Do task" },
+    };
+
+    const mockCall = vi.fn()
+      .mockResolvedValueOnce(makeLLMResponse(assignDecision))
+      .mockResolvedValue(makeLLMResponse(makeCompleteDecision()));
+
+    const llm = { call: mockCall, quickClaude: vi.fn() } as unknown as LLMProvider;
+
+    const { WorkerExecutor } = await import("../worker-executor.js");
+    (WorkerExecutor as ReturnType<typeof vi.fn>).mockImplementationOnce(() => ({
+      executeWorkerTask: vi.fn().mockResolvedValue({
+        success: false,
+        result: null,
+        summary: "Auth failure — cannot proceed",
+        artifacts: [],
+        confidence: 0.1,
+        recovery: {
+          status: "ESCALATED",
+          actionsAttempted: ["tried alternative auth"],
+          escalationReason: "API key invalid",
+          nextAgentCanProceed: false,
+        } satisfies RecoveryInfo,
+      } satisfies TaskOutput),
+    }));
+
+    const taskStore = new TaskStore();
+    const task = taskStore.create({ title: "Escalated Task", description: "Will escalate" });
+    const mediator = makeMediator(llm, taskStore, makeMockGuard(), makeMockPool());
+    const output = await mediator.processTask(task.id);
+
+    expect(output.success).toBe(false);
+    expect(output.recovery?.status).toBe("ESCALATED");
+    // Should NOT have retried with a second assign/complete — ESCALATED returns immediately
+    // Only 1 LLM call (the assign decision)
+    expect(mockCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("RECOVERED with confidence >= 0.5 → accepted", async () => {
+    const assignDecision = {
+      action: "assign",
+      reasoning: "Assigning to claude",
+      confidence: 0.9,
+      assignment: { agent: "claude", reason: "Best agent", prompt: "Do task" },
+    };
+
+    const mockCall = vi.fn().mockResolvedValueOnce(makeLLMResponse(assignDecision));
+    const llm = { call: mockCall, quickClaude: vi.fn() } as unknown as LLMProvider;
+
+    const { WorkerExecutor } = await import("../worker-executor.js");
+    (WorkerExecutor as ReturnType<typeof vi.fn>).mockImplementationOnce(() => ({
+      executeWorkerTask: vi.fn().mockResolvedValue({
+        success: true,
+        result: "Fixed path and succeeded",
+        summary: "Recovered after path fix",
+        artifacts: [],
+        confidence: 0.7,
+        recovery: {
+          status: "RECOVERED",
+          actionsAttempted: ["retried with correct path"],
+          nextAgentCanProceed: true,
+        } satisfies RecoveryInfo,
+      } satisfies TaskOutput),
+    }));
+
+    const taskStore = new TaskStore();
+    const task = taskStore.create({ title: "Recovered Task", description: "Will recover" });
+    const mediator = makeMediator(llm, taskStore, makeMockGuard(), makeMockPool());
+    const output = await mediator.processTask(task.id);
+
+    expect(output.success).toBe(true);
+    expect(output.recovery?.status).toBe("RECOVERED");
+    expect(mockCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("DEGRADED with retries remaining → triggers retry", async () => {
+    const assignDecision = {
+      action: "assign",
+      reasoning: "Assigning to claude",
+      confidence: 0.9,
+      assignment: { agent: "claude", reason: "Best agent", prompt: "Do task" },
+    };
+    const completeDecision = makeCompleteDecision({ result: "Done on retry" });
+
+    const mockCall = vi.fn()
+      .mockResolvedValueOnce(makeLLMResponse(assignDecision))
+      .mockResolvedValue(makeLLMResponse(completeDecision));
+
+    const llm = { call: mockCall, quickClaude: vi.fn() } as unknown as LLMProvider;
+
+    const { WorkerExecutor } = await import("../worker-executor.js");
+    (WorkerExecutor as ReturnType<typeof vi.fn>).mockImplementationOnce(() => ({
+      executeWorkerTask: vi.fn().mockResolvedValue({
+        success: true,
+        result: "Partial result",
+        summary: "Degraded — missing some parts",
+        artifacts: [],
+        confidence: 0.4,
+        recovery: {
+          status: "DEGRADED",
+          actionsAttempted: ["partial completion"],
+          degradedGaps: ["missing tests"],
+          nextAgentCanProceed: false,
+        } satisfies RecoveryInfo,
+      } satisfies TaskOutput),
+    }));
+
+    const taskStore = new TaskStore();
+    const task = taskStore.create({ title: "Degraded Task", description: "Will degrade then retry" });
+    const mediator = makeMediator(llm, taskStore, makeMockGuard(), makeMockPool());
+    const output = await mediator.processTask(task.id);
+
+    // DEGRADED with nextAgentCanProceed=false and retries remaining → retry
+    // Second call returns complete → success
+    expect(output.success).toBe(true);
+    expect(output.result).toBe("Done on retry");
+    expect(mockCall).toHaveBeenCalledTimes(2);
   });
 });

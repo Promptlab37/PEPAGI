@@ -134,6 +134,14 @@ function scrubSecrets(config: PepagiConfig): Record<string, unknown> {
       }
     }
   }
+  // Scrub Google client secret
+  const google = c["google"] as Record<string, unknown> | undefined;
+  if (google && typeof google["clientSecret"] === "string" && google["clientSecret"].length > 0) {
+    google["clientSecret"] = HIDDEN;
+  }
+  if (google && typeof google["clientId"] === "string" && google["clientId"].length > 0) {
+    google["clientId"] = HIDDEN;
+  }
   return c;
 }
 
@@ -247,6 +255,17 @@ function mergeConfig(existing: PepagiConfig, incoming: Record<string, unknown>):
   // Web
   if (incoming["web"] && typeof incoming["web"] === "object") {
     merged["web"] = { ...(merged["web"] as object), ...(incoming["web"] as object) };
+  }
+
+  // Google
+  if (incoming["google"] && typeof incoming["google"] === "object") {
+    const existGoogle = (merged["google"] ?? {}) as Record<string, unknown>;
+    const incomingGoogle = incoming["google"] as Record<string, unknown>;
+    for (const [k, v] of Object.entries(incomingGoogle)) {
+      if ((k === "clientId" || k === "clientSecret") && (v === HIDDEN || v === "")) continue; // keep existing
+      existGoogle[k] = v;
+    }
+    merged["google"] = existGoogle;
   }
 
   return merged as unknown as PepagiConfig;
@@ -520,5 +539,29 @@ export async function handleToggleAgent(deps: RestDeps, req: IncomingMessage, re
     json(res, 200, { provider, available: result.available });
   } catch (err) {
     json(res, 400, { error: String(err) });
+  }
+}
+
+/** POST /api/google/auth — Start Google OAuth2 flow, return auth URL. */
+export async function handleGoogleAuthStart(_deps: RestDeps, _req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const { startGoogleAuth } = await import("../integrations/google-auth.js");
+    const { authUrl, waitForCallback } = await startGoogleAuth();
+    // Don't await the callback — it waits for browser redirect
+    void waitForCallback();
+    json(res, 200, { authUrl });
+  } catch (err) {
+    json(res, 500, { error: `Failed to start Google auth: ${err instanceof Error ? err.message : String(err)}` });
+  }
+}
+
+/** GET /api/google/auth/status — Check if Google OAuth is authenticated. */
+export async function handleGoogleAuthStatus(_deps: RestDeps, _req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const { isGoogleAuthenticated } = await import("../integrations/google-auth.js");
+    const authenticated = await isGoogleAuthenticated();
+    json(res, 200, { authenticated });
+  } catch {
+    json(res, 200, { authenticated: false });
   }
 }

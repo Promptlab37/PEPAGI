@@ -6,7 +6,7 @@ import { readFile, appendFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
-import type { Task, TaskOutput } from "../core/types.js";
+import type { Task, TaskOutput, RecoveryLearning } from "../core/types.js";
 import { parseLLMJson } from "../core/parse-llm-json.js";
 import type { LLMProvider } from "../agents/llm-provider.js";
 import { CHEAP_CLAUDE_MODEL } from "../agents/pricing.js";
@@ -156,6 +156,31 @@ export class ReflectionBank {
     );
 
     return `**Past Reflections:**\n${items.join("\n")}`;
+  }
+
+  /**
+   * Ingest a RecoveryLearning as a Reflection without LLM call.
+   * Converts recovery data directly into the reflection format.
+   */
+  async ingestRecoveryLearning(task: Task, learning: RecoveryLearning): Promise<Reflection> {
+    await this.ensureLoaded();
+
+    const reflection: Reflection = {
+      id: nanoid(8),
+      taskId: task.id,
+      taskTitle: task.title.slice(0, 100),
+      whatWorked: learning.solution.slice(0, 500),
+      whatDidnt: `${learning.failurePattern}: ${learning.rootCause}`.slice(0, 500),
+      wouldDoDifferently: learning.preventionHint.slice(0, 500),
+      timestamp: new Date().toISOString(),
+      tags: [...task.tags, "recovery"],
+    };
+
+    this.reflections.push(reflection);
+    await this.appendReflection(reflection);
+
+    logger.debug("Ingested recovery learning as reflection", { taskId: task.id, reflectionId: reflection.id });
+    return reflection;
   }
 
   async getStats(): Promise<{ total: number }> {

@@ -138,6 +138,13 @@ function renderConfig(c) {
   const con = c.consciousness || {};
   setVal('consciousnessProfile', con.profile || 'STANDARD');
   setChecked('consciousnessEnabled', con.enabled !== false);
+
+  // Google
+  const g = c.google || {};
+  setVal('googleClientId', g.clientId === HIDDEN ? '' : (g.clientId || ''));
+  setVal('googleClientSecret', g.clientSecret === HIDDEN ? '' : (g.clientSecret || ''));
+  setChecked('googleEnabled', g.enabled || false);
+  checkGoogleAuthStatus();
 }
 
 function renderAgents(agents) {
@@ -565,6 +572,13 @@ function collectConfig() {
     enabled: getChecked('consciousnessEnabled'),
   };
 
+  // Google
+  config.google = {
+    enabled: getChecked('googleEnabled'),
+    clientId: getVal('googleClientId') || HIDDEN,
+    clientSecret: getVal('googleClientSecret') || HIDDEN,
+  };
+
   return config;
 }
 
@@ -823,6 +837,69 @@ function setQRStatus(text, className) {
 // Expose globally for onclick
 window.openWhatsAppQR = openWhatsAppQR;
 
+// ── Google OAuth2 ────────────────────────────────────────────
+
+async function checkGoogleAuthStatus() {
+  const statusEl = document.getElementById('google-auth-status');
+  const btn = document.getElementById('google-connect-btn');
+  try {
+    const res = await fetch('/api/google/auth/status');
+    const data = await res.json();
+    if (data.authenticated) {
+      if (statusEl) {
+        statusEl.textContent = '\u2713 Google account connected';
+        statusEl.style.color = 'var(--green)';
+      }
+      if (btn) btn.textContent = 'Reconnect Google Account';
+    } else {
+      if (statusEl) {
+        statusEl.textContent = 'Not connected';
+        statusEl.style.color = 'var(--dim)';
+      }
+      if (btn) btn.textContent = 'Connect Google Account';
+    }
+  } catch {
+    if (statusEl) {
+      statusEl.textContent = 'Could not check status';
+      statusEl.style.color = 'var(--coral)';
+    }
+  }
+}
+
+async function connectGoogle() {
+  const btn = document.getElementById('google-connect-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
+  try {
+    const res = await fetch('/api/google/auth', { method: 'POST' });
+    const data = await res.json();
+    if (data.authUrl) {
+      window.open(data.authUrl, '_blank');
+      showStatus('Google auth opened in browser. Complete the sign-in flow.', 'success');
+      // Poll for completion
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const check = await fetch('/api/google/auth/status');
+          const s = await check.json();
+          if (s.authenticated) {
+            clearInterval(poll);
+            checkGoogleAuthStatus();
+            showStatus('Google account connected!', 'success');
+          }
+        } catch { /* ignore */ }
+        if (attempts > 60) clearInterval(poll); // stop after 5min
+      }, 5000);
+    } else {
+      showStatus('Failed: ' + (data.error || 'No auth URL'), 'error');
+    }
+  } catch (err) {
+    showStatus('Google auth error: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Connect Google Account'; }
+  }
+}
+
 // ── Init ─────────────────────────────────────────────────────
 
 function init() {
@@ -830,6 +907,7 @@ function init() {
 
   document.getElementById('save-btn')?.addEventListener('click', saveConfig);
   document.getElementById('add-custom-provider-btn')?.addEventListener('click', addCustomProvider);
+  document.getElementById('google-connect-btn')?.addEventListener('click', connectGoogle);
 
   loadConfig();
 }

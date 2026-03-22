@@ -2,7 +2,7 @@
 // PEPAGI — Worker Task Executor
 // ═══════════════════════════════════════════════════════════════
 
-import type { Task, TaskOutput, AgentProvider, DifficultyLevel } from "./types.js";
+import type { Task, TaskOutput, AgentProvider, DifficultyLevel, RecoveryStatus, RecoveryInfo, RecoveryLearning } from "./types.js";
 import type { LLMProvider } from "../agents/llm-provider.js";
 import { LLMProviderError } from "../agents/llm-provider.js";
 import type { SecurityGuard } from "../security/security-guard.js";
@@ -113,6 +113,84 @@ function extractResult(output: string): string {
   return sepIdx >= 0 ? output.slice(0, sepIdx).trim() : output.trim();
 }
 
+// ─── Recovery Marker Extraction ─────────────────────────────
+
+/** Extract recovery status from worker output ([RECOVERED], [DEGRADED], [ESCALATED]) */
+export function extractRecoveryStatus(output: string): RecoveryStatus | null {
+  if (output.includes("[ESCALATED]")) return "ESCALATED";
+  if (output.includes("[DEGRADED]")) return "DEGRADED";
+  if (output.includes("[RECOVERED]")) return "RECOVERED";
+  return null;
+}
+
+/** Extract recovery actions list from [RECOVERY_ACTIONS]: action1, action2, ... */
+export function extractRecoveryActions(output: string): string[] {
+  const match = output.match(/\[RECOVERY_ACTIONS\]:\s*(.+)/);
+  if (!match?.[1]) return [];
+  return match[1].split(",").map(s => s.trim()).filter(Boolean);
+}
+
+/** Extract gap report from [GAP_REPORT]: gap1, gap2, ... */
+export function extractGapReport(output: string): string[] {
+  const match = output.match(/\[GAP_REPORT\]:\s*(.+)/);
+  if (!match?.[1]) return [];
+  return match[1].split(",").map(s => s.trim()).filter(Boolean);
+}
+
+/** Extract escalation reason from [ESCALATION_REASON]: reason */
+export function extractEscalationReason(output: string): string | undefined {
+  const match = output.match(/\[ESCALATION_REASON\]:\s*(.+)/);
+  return match?.[1]?.trim();
+}
+
+/** Extract [LEARNING] blocks from worker output */
+export function extractRecoveryLearnings(output: string): RecoveryLearning[] {
+  const learnings: RecoveryLearning[] = [];
+  const regex = /\[LEARNING\]\s*\n\s*PATTERN:\s*(.+)\n\s*ROOT_CAUSE:\s*(.+)\n\s*SOLUTION:\s*(.+)\n\s*PREVENTION:\s*(.+)\n\s*\[\/LEARNING\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(output)) !== null) {
+    learnings.push({
+      failurePattern: match[1]!.trim(),
+      rootCause: match[2]!.trim(),
+      solution: match[3]!.trim(),
+      preventionHint: match[4]!.trim(),
+    });
+  }
+  return learnings;
+}
+
+/** Aggregate all recovery info from worker output */
+export function extractRecoveryInfo(output: string): RecoveryInfo | undefined {
+  const status = extractRecoveryStatus(output);
+  if (!status) return undefined;
+
+  const actionsAttempted = extractRecoveryActions(output);
+  const degradedGaps = status === "DEGRADED" ? extractGapReport(output) : undefined;
+  const escalationReason = status === "ESCALATED" ? extractEscalationReason(output) : undefined;
+
+  return {
+    status,
+    actionsAttempted,
+    degradedGaps,
+    escalationReason,
+    nextAgentCanProceed: status !== "ESCALATED",
+  };
+}
+
+/** Strip all recovery markers from output text for clean result */
+export function stripRecoveryMarkers(output: string): string {
+  return output
+    .replace(/\[RECOVERED\]/g, "")
+    .replace(/\[DEGRADED\]/g, "")
+    .replace(/\[ESCALATED\]/g, "")
+    .replace(/\[RECOVERY_ACTIONS\]:\s*.+/g, "")
+    .replace(/\[GAP_REPORT\]:\s*.+/g, "")
+    .replace(/\[ESCALATION_REASON\]:\s*.+/g, "")
+    .replace(/\[LEARNING\]\s*\n\s*PATTERN:\s*.+\n\s*ROOT_CAUSE:\s*.+\n\s*SOLUTION:\s*.+\n\s*PREVENTION:\s*.+\n\s*\[\/LEARNING\]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export class WorkerExecutor {
   /** Track running executions so we can abort them. Key = taskId */
   private runningTasks = new Map<string, { agent: AgentProvider; abortController: AbortController; startedAt: number }>();
@@ -148,7 +226,7 @@ export class WorkerExecutor {
   /** Build OpenAI-compatible tool definitions from ToolRegistry for non-Claude agentic mode */
   private getToolDefinitions(): import("../agents/llm-provider.js").ToolDefinition[] {
     // Core tools for agentic work — matches what Claude CLI gets
-    const coreTools = ["bash", "read_file", "write_file", "list_directory", "web_fetch", "web_search", "download_file", "github"];
+    const coreTools = ["bash", "read_file", "write_file", "list_directory", "web_fetch", "web_search", "download_file", "github", "gmail", "google_drive"];
     return this.tools.getAll()
       .filter(t => coreTools.includes(t.name))
       .map(t => ({
@@ -168,7 +246,9 @@ export class WorkerExecutor {
       web_fetch: { type: "object", properties: { url: { type: "string", description: "URL to fetch" } }, required: ["url"] },
       web_search: { type: "object", properties: { query: { type: "string", description: "Search query" } }, required: ["query"] },
       download_file: { type: "object", properties: { url: { type: "string", description: "URL to download" }, filename: { type: "string", description: "Optional output filename" } }, required: ["url"] },
-      github: { type: "object", properties: { action: { type: "string", description: "GitHub action (list_repos, get_repo, create_issue, list_issues, search_code)" }, owner: { type: "string" }, repo: { type: "string" }, query: { type: "string" }, title: { type: "string" }, body: { type: "string" } }, required: ["action"] },
+      github: { type: "object", properties: { action: { type: "string", description: "GitHub action: pr_list, issue_list, notifications, repo_status, create_repo, create_issue, create_pr, search_code, clone" }, repo: { type: "string", description: "Repository (owner/name)" }, limit: { type: "string", description: "Max results" }, name: { type: "string", description: "Repo name for create_repo" }, title: { type: "string", description: "Title for create_issue/create_pr" }, body: { type: "string", description: "Body for create_issue/create_pr" }, query: { type: "string", description: "Search query for search_code" }, base: { type: "string", description: "Base branch for create_pr" }, visibility: { type: "string", description: "public or private for create_repo" } }, required: ["action"] },
+      gmail: { type: "object", properties: { action: { type: "string", description: "Gmail action: list, read, send, reply, search, label, delete" }, id: { type: "string", description: "Message ID" }, to: { type: "string", description: "Recipient email" }, subject: { type: "string", description: "Email subject" }, body: { type: "string", description: "Email body" }, query: { type: "string", description: "Search query" }, maxResults: { type: "string", description: "Max results" } }, required: ["action"] },
+      google_drive: { type: "object", properties: { action: { type: "string", description: "Drive action: list, read, upload, create, share, search" }, fileId: { type: "string", description: "File ID" }, name: { type: "string", description: "File/folder name" }, content: { type: "string", description: "Text content for upload" }, query: { type: "string", description: "Search query" }, email: { type: "string", description: "Email for share" }, folderId: { type: "string", description: "Parent folder ID" } }, required: ["action"] },
     };
     return schemas[name] ?? { type: "object", properties: {} };
   }
@@ -308,9 +388,29 @@ export class WorkerExecutor {
           return { success: false, result: null, summary: `Security: ${leakCheck.reason}`, artifacts: [], confidence: 0 };
         }
 
-        const confidence = extractConfidence(sanitizedContent);
+        let confidence = extractConfidence(sanitizedContent);
         const summary = extractSummary(sanitizedContent);
         let result = extractResult(sanitizedContent);
+
+        // ── Recovery marker extraction ──
+        const recovery = extractRecoveryInfo(sanitizedContent);
+        const recoveryLearnings = extractRecoveryLearnings(sanitizedContent);
+
+        // Emit recovery event if recovery occurred
+        if (recovery) {
+          eventBus.emit({ type: "worker:recovery", taskId: task.id, status: recovery.status, actions: recovery.actionsAttempted });
+          // Strip recovery markers from result text
+          result = stripRecoveryMarkers(result);
+        }
+
+        // Adjust success/confidence based on recovery status
+        let success = true;
+        if (recovery?.status === "ESCALATED") {
+          success = false;
+          confidence = Math.min(confidence, 0.2);
+        } else if (recovery?.status === "DEGRADED") {
+          confidence = Math.min(confidence, 0.5);
+        }
 
         // Fallback: if result is empty but agent worked (cost > 0), use summary or raw content
         if (!result && response.cost > 0) {
@@ -325,13 +425,22 @@ export class WorkerExecutor {
           cost: response.cost,
           latencyMs: response.latencyMs,
           toolsUsed: response.toolCalls.map(t => t.name),
+          recoveryStatus: recovery?.status,
         });
 
-        eventBus.emit({ type: "mediator:thinking", taskId: task.id, thought: `Worker ${agent} done (confidence: ${(confidence * 100).toFixed(0)}%, cost: $${response.cost.toFixed(4)})` });
+        eventBus.emit({ type: "mediator:thinking", taskId: task.id, thought: `Worker ${agent} done (confidence: ${(confidence * 100).toFixed(0)}%, cost: $${response.cost.toFixed(4)}${recovery ? `, recovery: ${recovery.status}` : ""})` });
 
         this.pool.decrementLoad(agent);
         this.runningTasks.delete(task.id);
-        return { success: true, result, summary, artifacts: [], confidence };
+        return {
+          success,
+          result,
+          summary,
+          artifacts: [],
+          confidence,
+          ...(recovery ? { recovery } : {}),
+          ...(recoveryLearnings.length > 0 ? { recoveryLearnings } : {}),
+        };
 
       } catch (err) {
         clearTimeout(timeoutId);

@@ -121,6 +121,7 @@ function makeConfig(overrides: Partial<PepagiConfig["selfHealing"]> = {}): Pepag
       allowCodeFixes: false,
       ...overrides,
     },
+    google: { enabled: false, clientId: "", clientSecret: "" },
   };
 }
 

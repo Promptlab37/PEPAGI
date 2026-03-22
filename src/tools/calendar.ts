@@ -10,6 +10,7 @@ import { Logger } from "../core/logger.js";
 import { eventBus } from "../core/event-bus.js";
 // SECURITY: SEC-31 — Content filtering for calendar events
 import { InputSanitizer } from "../security/input-sanitizer.js";
+import { isGoogleAuthenticated, googleFetch } from "../integrations/google-auth.js";
 
 const logger = new Logger("Calendar");
 const execAsync = promisify(exec);
@@ -51,7 +52,6 @@ async function sanitizeCalendarContent(text: string): Promise<{ sanitized: strin
 }
 
 const IS_MAC = process.platform === "darwin";
-const GOOGLE_CALENDAR_TOKEN = process.env.GOOGLE_CALENDAR_TOKEN ?? "";
 const GOOGLE_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID ?? "primary";
 
 // ─── macOS iCal helpers ───────────────────────────────────────
@@ -195,23 +195,13 @@ interface GCalEventList {
 
 /**
  * Make an authenticated request to the Google Calendar API.
+ * Uses OAuth2 module for authentication (auto-refreshes tokens).
  * @param path - API path (relative to /calendar/v3)
  * @param options - fetch options
  */
 async function gcalFetch(path: string, options: RequestInit = {}): Promise<unknown> {
-  if (!GOOGLE_CALENDAR_TOKEN) {
-    throw new Error("GOOGLE_CALENDAR_TOKEN not configured");
-  }
   const url = `https://www.googleapis.com/calendar/v3${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${GOOGLE_CALENDAR_TOKEN}`,
-      "Content-Type": "application/json",
-      ...(options.headers as Record<string, string> ?? {}),
-    },
-    signal: AbortSignal.timeout(15_000),
-  });
+  const res = await googleFetch(url, options);
   if (!res.ok) {
     throw new Error(`Google Calendar API ${res.status}: ${await res.text()}`);
   }
@@ -288,14 +278,92 @@ async function gcalSearchEvents(query: string): Promise<string> {
   }).join("\n");
 }
 
+/**
+ * Update a Google Calendar event.
+ * @param eventId - Event ID to update
+ * @param updates - Fields to update (title, startDate, endDate, notes)
+ */
+async function gcalUpdateEvent(
+  eventId: string,
+  updates: { title?: string; startDate?: string; endDate?: string; notes?: string },
+): Promise<string> {
+  const body: Record<string, unknown> = {};
+  if (updates.title) body.summary = updates.title;
+  if (updates.notes !== undefined) body.description = updates.notes;
+  if (updates.startDate) body.start = { dateTime: updates.startDate };
+  if (updates.endDate) body.end = { dateTime: updates.endDate };
+
+  const result = await gcalFetch(
+    `/calendars/${encodeURIComponent(GOOGLE_CALENDAR_ID)}/events/${encodeURIComponent(eventId)}`,
+    { method: "PATCH", body: JSON.stringify(body) },
+  ) as GCalEvent;
+  return `Event updated: "${result.summary}" — ${result.htmlLink ?? ""}`;
+}
+
+/**
+ * Delete (cancel) a Google Calendar event.
+ * @param eventId - Event ID to delete
+ */
+async function gcalDeleteEvent(eventId: string): Promise<string> {
+  await gcalFetch(
+    `/calendars/${encodeURIComponent(GOOGLE_CALENDAR_ID)}/events/${encodeURIComponent(eventId)}`,
+    { method: "DELETE" },
+  );
+  return `Event ${eventId} deleted.`;
+}
+
+/**
+ * Find free time slots using Google Calendar FreeBusy API.
+ * @param days - Number of days to check (default 7)
+ */
+async function gcalFindFreeTime(days: number): Promise<string> {
+  const now = new Date();
+  const future = new Date(now.getTime() + days * 86_400_000);
+  const body = {
+    timeMin: now.toISOString(),
+    timeMax: future.toISOString(),
+    items: [{ id: GOOGLE_CALENDAR_ID }],
+  };
+
+  const data = await gcalFetch("/freeBusy", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }) as { calendars?: Record<string, { busy?: Array<{ start: string; end: string }> }> };
+
+  const busy = data.calendars?.[GOOGLE_CALENDAR_ID]?.busy ?? [];
+  if (busy.length === 0) return `You're completely free for the next ${days} days!`;
+
+  // Calculate free slots between busy periods (business hours 8-18)
+  const slots: string[] = [];
+  let prevEnd = now;
+  for (const b of busy) {
+    const busyStart = new Date(b.start);
+    if (busyStart.getTime() - prevEnd.getTime() > 1_800_000) { // > 30min gap
+      slots.push(`Free: ${prevEnd.toISOString().slice(0, 16)} — ${busyStart.toISOString().slice(0, 16)}`);
+    }
+    prevEnd = new Date(b.end);
+  }
+  if (future.getTime() - prevEnd.getTime() > 1_800_000) {
+    slots.push(`Free: ${prevEnd.toISOString().slice(0, 16)} — ${future.toISOString().slice(0, 16)}`);
+  }
+
+  const busyText = busy.map(b => `Busy: ${b.start.slice(0, 16)} — ${b.end.slice(0, 16)}`).join("\n");
+  return `Busy periods:\n${busyText}\n\nFree slots (>30min):\n${slots.join("\n") || "No significant free slots found."}`;
+}
+
 // ─── Dispatch: choose iCal or Google Calendar ─────────────────
 
 /**
  * Determine which backend to use.
- * Prefer macOS iCal when running on macOS; fall back to Google Calendar if token is set.
+ * Prefer macOS iCal when running on macOS; use Google Calendar as fallback.
  */
 function useICal(): boolean {
   return IS_MAC;
+}
+
+/** Check if Google Calendar OAuth is available (async) */
+async function hasGoogleCalendar(): Promise<boolean> {
+  return isGoogleAuthenticated();
 }
 
 // ─── Tool export ──────────────────────────────────────────────
@@ -303,48 +371,54 @@ function useICal(): boolean {
 export const calendarTool = {
   name: "calendar",
   description:
-    "Manage calendar events: list upcoming events, add new events, search by keyword. Uses macOS Calendar (iCal) or Google Calendar.",
+    "Manage calendar events: list, add, search, update, delete, find free time. Uses macOS iCal (primary) or Google Calendar (OAuth2).",
   parameters: [
     {
       name: "action",
       type: "string" as const,
-      description: "Action: list_events, add_event, search_events",
+      description: "Action: list_events, add_event, search_events, update_event, delete_event, find_free_time",
       required: true,
     },
     {
       name: "days",
       type: "string" as const,
-      description: "Number of days to look ahead for list_events (default: 7)",
+      description: "Number of days to look ahead for list_events/find_free_time (default: 7)",
       required: false,
     },
     {
       name: "title",
       type: "string" as const,
-      description: "Event title for add_event",
+      description: "Event title for add_event/update_event",
       required: false,
     },
     {
       name: "start_date",
       type: "string" as const,
-      description: "Event start date/time as ISO 8601 string (e.g. 2026-03-20T10:00:00) for add_event",
+      description: "Event start date/time as ISO 8601 string (e.g. 2026-03-20T10:00:00) for add_event/update_event",
       required: false,
     },
     {
       name: "end_date",
       type: "string" as const,
-      description: "Event end date/time as ISO 8601 string for add_event (optional, defaults to start + 1 hour)",
+      description: "Event end date/time as ISO 8601 string for add_event/update_event (optional, defaults to start + 1 hour)",
       required: false,
     },
     {
       name: "notes",
       type: "string" as const,
-      description: "Event description/notes for add_event (optional)",
+      description: "Event description/notes for add_event/update_event (optional)",
       required: false,
     },
     {
       name: "query",
       type: "string" as const,
       description: "Search keyword for search_events",
+      required: false,
+    },
+    {
+      name: "event_id",
+      type: "string" as const,
+      description: "Event ID for update_event/delete_event (Google Calendar only)",
       required: false,
     },
   ],
@@ -355,13 +429,14 @@ export const calendarTool = {
       return { success: false, output: "action parameter is required" };
     }
 
-    // Non-Mac with no Google token
-    if (!IS_MAC && !GOOGLE_CALENDAR_TOKEN) {
+    // Non-Mac: check if Google OAuth is available
+    const googleAvail = await hasGoogleCalendar();
+    if (!IS_MAC && !googleAvail) {
       return {
         success: false,
         output:
           "Calendar not available. On macOS, Calendar app is used automatically. " +
-          "On other platforms, set GOOGLE_CALENDAR_TOKEN in .env",
+          "On other platforms, configure Google OAuth2 via setup.",
       };
     }
 
@@ -442,10 +517,51 @@ export const calendarTool = {
           return { success: true, output };
         }
 
+        case "update_event": {
+          const eventId = params.event_id ?? "";
+          if (!eventId) return { success: false, output: "event_id parameter required for update_event" };
+          if (!googleAvail) return { success: false, output: "update_event requires Google Calendar OAuth2" };
+
+          const updates: { title?: string; startDate?: string; endDate?: string; notes?: string } = {};
+          if (params.title) {
+            const tc = await sanitizeCalendarContent(params.title);
+            if (tc.blocked) return { success: false, output: "Event title blocked: potential injection" };
+            updates.title = tc.sanitized;
+          }
+          if (params.start_date) updates.startDate = params.start_date;
+          if (params.end_date) updates.endDate = params.end_date;
+          if (params.notes !== undefined) {
+            const nc = await sanitizeCalendarContent(params.notes);
+            if (nc.blocked) return { success: false, output: "Event notes blocked: potential injection" };
+            updates.notes = nc.sanitized;
+          }
+
+          recordCalendarOp();
+          const output = await gcalUpdateEvent(eventId, updates);
+          return { success: true, output };
+        }
+
+        case "delete_event": {
+          const eventId = params.event_id ?? "";
+          if (!eventId) return { success: false, output: "event_id parameter required for delete_event" };
+          if (!googleAvail) return { success: false, output: "delete_event requires Google Calendar OAuth2" };
+
+          recordCalendarOp();
+          const output = await gcalDeleteEvent(eventId);
+          return { success: true, output };
+        }
+
+        case "find_free_time": {
+          if (!googleAvail) return { success: false, output: "find_free_time requires Google Calendar OAuth2" };
+          const days = params.days ? parseInt(params.days, 10) : 7;
+          const output = await gcalFindFreeTime(days);
+          return { success: true, output };
+        }
+
         default:
           return {
             success: false,
-            output: `Unknown action: ${action}. Valid: list_events, add_event, search_events`,
+            output: `Unknown action: ${action}. Valid: list_events, add_event, search_events, update_event, delete_event, find_free_time`,
           };
       }
     } catch (err) {

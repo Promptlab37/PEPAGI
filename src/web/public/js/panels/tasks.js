@@ -111,6 +111,73 @@ function streamingBadge(state) {
 /** Set of task IDs whose detail is expanded */
 const expandedTasks = new Set();
 
+/** Current view mode: 'table' or 'kanban' */
+let viewMode = 'table';
+
+/** Map task status to kanban column */
+function statusToKanban(status) {
+  if (status === 'pending' || status === 'queued') return 'todo';
+  if (status === 'assigned' || status === 'running' || status === 'waiting_subtasks') return 'doing';
+  if (status === 'review') return 'review';
+  if (status === 'completed') return 'done';
+  if (status === 'failed' || status === 'cancelled') return 'failed';
+  return 'todo';
+}
+
+/** Render a kanban card */
+function kanbanCard(t) {
+  const pct = Math.round((t.confidence || 0) * 100);
+  const confColor = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--gold)' : 'var(--coral)';
+  return `<div class="kanban-card" title="${escapeHtml(t.title)}">
+    <div class="kanban-card-title">${trunc(t.title, 40)}</div>
+    <div class="kanban-card-meta">
+      <span class="kanban-card-agent">${t.agent || '-'}</span>
+      <span class="kanban-card-conf"><span class="kanban-card-conf-fill" style="width:${pct}%;background:${confColor}"></span></span>
+      <span class="kanban-card-cost">${fmtCost(t.cost)}</span>
+      ${t.difficulty ? diffBadge(t.difficulty) : ''}
+    </div>
+  </div>`;
+}
+
+/** Render the kanban board */
+function renderKanban(state) {
+  const active = Object.values(state.activeTasks || {});
+  const completed = (state.completedTasks || []).slice(-20).reverse();
+  const all = [...active, ...completed];
+
+  const columns = { todo: [], doing: [], review: [], done: [], failed: [] };
+  for (const t of all) {
+    const col = statusToKanban(t.status);
+    columns[col].push(t);
+  }
+
+  for (const [col, tasks] of Object.entries(columns)) {
+    const el = document.getElementById(`kanban-${col}`);
+    if (!el) continue;
+    if (tasks.length === 0) {
+      el.innerHTML = `<div class="kanban-col-empty">empty</div>`;
+    } else {
+      el.innerHTML = tasks.map(kanbanCard).join('');
+    }
+  }
+}
+
+/** Toggle between table and kanban views */
+export function toggleTaskView() {
+  viewMode = viewMode === 'table' ? 'kanban' : 'table';
+  const table = document.getElementById('tasks-table');
+  const kanban = document.getElementById('kanban-board');
+  const btn = document.getElementById('task-view-toggle');
+  if (table) table.style.display = viewMode === 'table' ? '' : 'none';
+  if (kanban) kanban.style.display = viewMode === 'kanban' ? '' : 'none';
+  if (btn) btn.innerHTML = viewMode === 'table' ? '&#9638; Kanban' : '&#9776; Table';
+}
+
+// Expose toggle globally for onclick
+if (typeof window !== 'undefined') {
+  window.__toggleTaskView = toggleTaskView;
+}
+
 export function renderTasks(state) {
   updateStreamingCounter(state);
   const tbody = document.getElementById('tasks-tbody');
@@ -210,4 +277,7 @@ export function renderTasks(state) {
       renderTasks(state);
     });
   });
+
+  // Also render kanban view (it may be hidden but keeps data fresh)
+  renderKanban(state);
 }

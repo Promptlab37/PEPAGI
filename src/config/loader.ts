@@ -127,6 +127,12 @@ const N8nConfigSchema = z.object({
   apiKey: z.string().default(""),
 });
 
+const GoogleConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  clientId: z.string().default(""),
+  clientSecret: z.string().default(""),
+});
+
 export const CustomProviderConfigSchema = z.object({
   displayName: z.string().default(""),
   baseUrl: z.string().default(""),
@@ -195,6 +201,7 @@ const PepagiConfigSchema = z.object({
   web: WebDashboardConfigSchema.default({ enabled: true, port: 3100, host: "127.0.0.1", authToken: "" }),
   n8n: N8nConfigSchema.default({ enabled: false, baseUrl: "", webhookPaths: [], apiKey: "" }),
   selfHealing: SelfHealingConfigSchema.default({ enabled: true, maxAttemptsPerHour: 3, cooldownMs: 300_000, costCapPerAttempt: 0.50, allowCodeFixes: false }),
+  google: GoogleConfigSchema.default({ enabled: false, clientId: "", clientSecret: "" }),
 });
 
 export type PepagiConfig = z.infer<typeof PepagiConfigSchema>;
@@ -299,6 +306,13 @@ export async function loadConfig(): Promise<PepagiConfig> {
     agents.gemini.enabled = true;
     log("GOOGLE_API_KEY detected — Gemini agent enabled");
   }
+
+  // Overlay Google OAuth2 env vars
+  const google = (raw.google ?? {}) as Record<string, unknown>;
+  raw.google = google;
+  if (process.env.GOOGLE_CLIENT_ID) google.clientId = process.env.GOOGLE_CLIENT_ID;
+  if (process.env.GOOGLE_CLIENT_SECRET) google.clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (google.clientId && google.clientSecret) google.enabled = true;
 
   const config = PepagiConfigSchema.parse(raw);
 

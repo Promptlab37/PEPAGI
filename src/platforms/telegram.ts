@@ -354,7 +354,7 @@ export class TelegramPlatform {
         } catch (err) {
           // SEC-12 fix: log full error internally, send only a generic message to the user
           logger.error("Goal run error", { goal: name, error: String(err) });
-          await ctx.reply("Nastala interní chyba. Zkuste to prosím znovu.");
+          await ctx.reply("❌ Nastala chyba. Zkontroluj logy (~/.pepagi/logs/).");
         }
 
       } else {
@@ -415,7 +415,7 @@ export class TelegramPlatform {
       } catch (err) {
         // SEC-12 fix: log full error internally, send only a generic message to the user
         logger.error("Memory command error", { userId: ctx.from.id, error: String(err) });
-        await ctx.reply("Nastala interní chyba. Zkuste to prosím znovu.");
+        await ctx.reply("❌ Nastala chyba. Zkontroluj logy (~/.pepagi/logs/).");
       }
     });
 
@@ -468,9 +468,12 @@ export class TelegramPlatform {
         logger.info("Telegram reply sent", { userId });
       } catch (err) {
         await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id).catch(() => {});
-        // SEC-12 fix: log full error internally, send only a generic message to the user
-        logger.error("Text handler error", { userId, error: String(err) });
-        await ctx.reply("Nastala interní chyba. Zkuste to prosím znovu.");
+        // SEC-12: log full error internally, show safe summary to user (no stack traces/paths)
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.error("Text handler error", { userId, error: errMsg });
+        // Show first line of error (safe — no internal paths or secrets)
+        const safeSummary = errMsg.split("\n")[0]?.slice(0, 200) ?? "Neznámá chyba";
+        await ctx.reply(`❌ Nepodařilo se zpracovat: ${safeSummary}`);
       }
     });
 
@@ -494,7 +497,7 @@ export class TelegramPlatform {
         } catch (transcribeErr) {
           // SEC-12 fix: log full error internally, send only a generic message to the user
           logger.warn("Voice transcription failed", { userId, error: String(transcribeErr) });
-          await ctx.reply("Nastala interní chyba. Zkuste to prosím znovu.");
+          await ctx.reply("❌ Nastala chyba. Zkontroluj logy (~/.pepagi/logs/).");
           return;
         }
 
@@ -518,7 +521,7 @@ export class TelegramPlatform {
       } catch (err) {
         // SEC-12 fix: already logged; send only a generic message to the user
         logger.error("Voice handler error", { userId, error: String(err) });
-        await ctx.reply("Nastala interní chyba. Zkuste to prosím znovu.");
+        await ctx.reply("❌ Nastala chyba. Zkontroluj logy (~/.pepagi/logs/).");
       }
     });
 
@@ -560,7 +563,7 @@ export class TelegramPlatform {
       } catch (err) {
         // SEC-12 fix: already logged; send only a generic message to the user
         logger.error("Photo handler error", { userId, error: String(err) });
-        await ctx.reply("Nastala interní chyba. Zkuste to prosím znovu.");
+        await ctx.reply("❌ Nastala chyba. Zkontroluj logy (~/.pepagi/logs/).");
       }
     });
 
@@ -626,7 +629,7 @@ export class TelegramPlatform {
         await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id).catch(() => {});
         // SEC-12 fix: log full error internally, send only a generic message to the user
         logger.error("Document handler error", { userId, error: String(err) });
-        await ctx.reply("Nastala interní chyba. Zkuste to prosím znovu.");
+        await ctx.reply("❌ Nastala chyba. Zkontroluj logy (~/.pepagi/logs/).");
       }
     });
 
@@ -677,7 +680,7 @@ export class TelegramPlatform {
       } catch (err) {
         // SEC-12 fix: log full error internally, send only a generic message to the user
         logger.warn("TTS failed", { userId, error: String(err) });
-        await ctx.reply(`Nastala interní chyba. Zkuste to prosím znovu.\n\nTextová odpověď:\n${text}`);
+        await ctx.reply(`❌ Hlasová syntéza selhala.\n\nTextová odpověď:\n${text}`);
       }
     });
 

@@ -159,6 +159,8 @@ export class Mediator {
   /** Active A/B experiment ID for current round */
   private activeExperimentId: string | null = null;
   private abVariant: "control" | "treatment" = "control";
+  /** Counter for auto-learn cycle trigger (consolidate + distill every 10 tasks) */
+  private completedTaskCount = 0;
 
   /** Register a provider for dynamic consciousness context injection */
   setConsciousnessProvider(fn: () => string): void {
@@ -182,6 +184,17 @@ export class Mediator {
       undefined,
       PROJECT_ROOT,
     );
+  }
+
+  /** Auto-consolidate episodic→semantic facts and distill high-success procedures into skills */
+  private async autoLearnCycle(): Promise<void> {
+    if (this.memory) {
+      await this.memory.consolidate();
+    }
+    if (this.skillDistiller) {
+      await this.skillDistiller.distill();
+    }
+    logger.info("Auto-learn cycle completed", { taskCount: this.completedTaskCount });
   }
 
   /** Kill a running agent execution. Returns true if found. */
@@ -485,6 +498,11 @@ export class Mediator {
               logger.debug("ReflectionBank.reflect failed", { error: String(err) })
             );
           }
+          // Auto-learn cycle: consolidate + distill every 10 completed tasks
+          this.completedTaskCount++;
+          if (this.completedTaskCount % 10 === 0) {
+            this.autoLearnCycle().catch(e => logger.debug("Auto-learn cycle failed", { error: String(e) }));
+          }
           return output;
         }
 
@@ -696,7 +714,44 @@ export class Mediator {
 
         logger.info("executeDecision: assign — calling executeWorkerTask", { taskId: task.id, agent: decision.assignment.agent });
         const output = await this.executor.executeWorkerTask(task, decision.assignment, memoryContext);
-        logger.info("executeDecision: assign — executeWorkerTask returned", { taskId: task.id, success: output.success, confidence: output.confidence });
+        logger.info("executeDecision: assign — executeWorkerTask returned", { taskId: task.id, success: output.success, confidence: output.confidence, recoveryStatus: output.recovery?.status });
+
+        // ── Recovery-aware evaluation ──
+        // Ingest recovery learnings into reflection bank (no LLM call)
+        if (output.recoveryLearnings?.length && this.reflectionBank) {
+          for (const learning of output.recoveryLearnings) {
+            this.reflectionBank.ingestRecoveryLearning(task, learning).catch(e =>
+              logger.debug("ingestRecoveryLearning failed", { error: String(e) })
+            );
+          }
+        }
+
+        if (output.recovery) {
+          const { status } = output.recovery;
+          if (status === "ESCALATED") {
+            // ESCALATED → immediate failure
+            logger.info("Recovery: ESCALATED — returning failure", { taskId: task.id });
+            return output;
+          }
+          if (status === "RECOVERED" && output.confidence >= 0.5) {
+            // RECOVERED with decent confidence → accept
+            logger.info("Recovery: RECOVERED — accepting result", { taskId: task.id, confidence: output.confidence });
+            return output;
+          }
+          if (status === "DEGRADED") {
+            if (task.attempts >= task.maxAttempts || output.recovery.nextAgentCanProceed) {
+              // DEGRADED but out of retries or next agent can proceed → accept
+              logger.info("Recovery: DEGRADED — accepting (out of retries or nextAgentCanProceed)", { taskId: task.id });
+              return output;
+            }
+            // DEGRADED with retries remaining → retry
+            logger.info("Recovery: DEGRADED — retrying", { taskId: task.id, attempt: task.attempts });
+            task.lastError = `Degraded result (${output.confidence}): ${output.summary}`;
+            return null;
+          }
+        }
+
+        // Standard evaluation (no recovery markers)
         if (output.confidence >= 0.7 || task.attempts >= task.maxAttempts) {
           return output;
         }

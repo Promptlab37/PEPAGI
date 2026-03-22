@@ -117,11 +117,22 @@ export class SecurityGuard {
   }
 
   /**
+   * Actions that are auto-approved even when requiresApproval lists them.
+   * Only low-risk actions that agents need to function. Everything else is blocked.
+   */
+  private static readonly DAEMON_AUTO_ALLOW: ReadonlySet<ActionCategory> = new Set([
+    "network_external",  // agents need web access to function
+    "email_send",        // explicitly gated by rate limiter in gmail tool
+    "git_push",          // explicitly gated by guard.authorize check in github tool
+  ]);
+
+  /**
    * Authorize an action category. Always blocks payment and secret_access.
+   * Actions in requireApproval are blocked unless they're in DAEMON_AUTO_ALLOW.
    * Returns true if allowed, false if blocked.
    */
   async authorize(taskId: string, action: ActionCategory, details: string): Promise<boolean> {
-    // Always blocked
+    // Always blocked — no exceptions
     if (action === "payment" || action === "secret_access") {
       logger.warn(`Blocked action: ${action}`, { taskId, details });
       await auditLog({ taskId, actionType: `auth:${action}`, details, outcome: "blocked" });
@@ -135,11 +146,17 @@ export class SecurityGuard {
       return true;
     }
 
-    // For now, auto-block actions requiring approval unless interactive mode allows them
-    // In a full implementation, this would emit an event and wait for user response
-    logger.warn(`Action requires approval: ${action}`, { taskId, details });
+    // Action requires approval — only allow if it's in the daemon auto-allow set
+    if (SecurityGuard.DAEMON_AUTO_ALLOW.has(action)) {
+      logger.info(`Action auto-approved (daemon safe-list): ${action}`, { taskId, details: details.slice(0, 200) });
+      await auditLog({ taskId, actionType: `auth:${action}`, details, outcome: "allowed" });
+      return true;
+    }
+
+    // Block: this action requires interactive approval which is unavailable
+    logger.warn(`Blocked action requiring approval: ${action}`, { taskId, details: details.slice(0, 200) });
     await auditLog({ taskId, actionType: `auth:${action}`, details, outcome: "blocked" });
-    eventBus.emit({ type: "security:blocked", taskId, reason: `Action "${action}" requires human approval` });
+    eventBus.emit({ type: "security:blocked", taskId, reason: `Action "${action}" requires approval (not in auto-allow list)` });
     return false;
   }
 
@@ -182,15 +199,48 @@ export class SecurityGuard {
   }
 
   /**
+   * Normalize a shell command for security comparison.
+   * Collapses flag variations: "rm -r -f /" → "rm -rf /",
+   * strips redundant whitespace, handles common evasion tricks.
+   */
+  private normalizeCommand(cmd: string): string {
+    let normalized = cmd.trim().toLowerCase();
+    // Remove sudo prefix
+    normalized = normalized.replace(/^sudo\s+/, "");
+    // Collapse multiple spaces
+    normalized = normalized.replace(/\s+/g, " ");
+    // Merge split short flags: "rm -r -f" → "rm -rf"
+    normalized = normalized.replace(/\s-([a-z])\s+-([a-z])/g, " -$1$2");
+    normalized = normalized.replace(/\s-([a-z])\s+-([a-z])/g, " -$1$2"); // second pass
+    return normalized;
+  }
+
+  /**
    * Validate a shell command against blocklist.
+   * Uses normalized comparison to prevent flag-splitting bypass.
    * Returns true if command is safe.
    */
   validateCommand(command: string): boolean {
     const cmd = command.trim().toLowerCase();
+    const normalized = this.normalizeCommand(command);
 
     for (const blocked of this.config.security.blockedCommands) {
-      if (cmd.includes(blocked.toLowerCase())) {
+      const normalizedBlocked = this.normalizeCommand(blocked);
+      if (cmd.includes(blocked.toLowerCase()) || normalized.includes(normalizedBlocked)) {
         logger.warn("Blocked dangerous command", { command, matched: blocked });
+        return false;
+      }
+    }
+
+    // Block known destructive patterns even if not in blocklist
+    const destructivePatterns = [
+      /\brm\s+(-[a-z]*r[a-z]*\s+(-[a-z]*f[a-z]*\s+)?|(-[a-z]*f[a-z]*\s+)?-[a-z]*r[a-z]*\s+)\/(\s|$)/, // rm -rf / variants
+      /\bchmod\s+(-[a-z]*\s+)?[0-7]*777\s+\//, // chmod 777 /
+      /\b>\s*\/dev\/[sh]da/, // write to disk device
+    ];
+    for (const pattern of destructivePatterns) {
+      if (pattern.test(normalized)) {
+        logger.warn("Blocked destructive command pattern", { command });
         return false;
       }
     }

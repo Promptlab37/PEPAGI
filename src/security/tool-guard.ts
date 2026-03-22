@@ -42,11 +42,40 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  *
  * SECURITY: SEC-06 — Blocks requests to private IPs, localhost,
  * file://, data:, and javascript: protocols.
+ * Also detects decimal IP notation, IPv6 shorthand, and 0x hex IPs.
  */
 export function isPrivateUrl(url: string): boolean {
+  // Fast regex check first
   for (const pattern of PRIVATE_IP_PATTERNS) {
     if (pattern.test(url)) return true;
   }
+
+  // Deep check: parse URL to detect encoded/obfuscated IPs
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Block bare IPv6 addresses (commonly used for SSRF bypass)
+    if (hostname.startsWith("[")) return true;
+
+    // Block decimal IP notation (e.g. http://2130706433 = 127.0.0.1)
+    if (/^\d{8,}$/.test(hostname)) return true;
+
+    // Block hex IP notation (e.g. http://0x7f000001)
+    if (/^0x[0-9a-f]+$/i.test(hostname)) return true;
+
+    // Block octal IP notation (e.g. http://0177.0.0.1)
+    if (/^0\d+\./.test(hostname)) return true;
+
+    // Block 0.0.0.0 and variants
+    if (/^0+\.0+\.0+\.0+$/.test(hostname)) return true;
+
+    // Block any hostname resolving to "internal" or "metadata" endpoints
+    if (hostname === "metadata.google.internal" || hostname === "169.254.169.254") return true;
+  } catch {
+    // Not a valid URL — treat as suspicious
+  }
+
   return false;
 }
 
