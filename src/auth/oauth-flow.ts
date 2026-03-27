@@ -31,10 +31,14 @@ function generateState(): string {
 
 /** Open URL in default browser */
 function openBrowser(url: string): void {
-  const cmd = process.platform === "darwin" ? "open"
-    : process.platform === "win32" ? "start"
-    : "xdg-open";
-  exec(`${cmd} "${url}"`);
+  if (process.platform === "darwin") {
+    exec(`open "${url}"`);
+  } else if (process.platform === "win32") {
+    // Windows: must use cmd /c start with empty title and escaped URL
+    exec(`cmd /c start "" "${url}"`);
+  } else {
+    exec(`xdg-open "${url}"`);
+  }
 }
 
 // ─── OpenAI OAuth (Codex-compatible PKCE flow) ──────────────
