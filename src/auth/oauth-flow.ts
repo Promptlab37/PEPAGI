@@ -195,15 +195,15 @@ export async function openaiOAuthLogin(): Promise<OAuthTokens> {
 
 const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const ANTHROPIC_AUTH_URL = "https://claude.ai/oauth/authorize";
-const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-const ANTHROPIC_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
-const ANTHROPIC_SCOPES = "org:create_api_key user:profile user:inference";
+const ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
+const ANTHROPIC_REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
+const ANTHROPIC_SCOPES = "user:profile user:inference";
 
 /**
  * Run the Anthropic PKCE OAuth flow:
  * 1. Open browser to claude.ai/oauth/authorize
  * 2. User logs in with claude.ai account
- * 3. Redirected to console.anthropic.com which shows the auth code
+ * 3. Redirected to platform.claude.com which shows the auth code
  * 4. User copies and pastes the code back into terminal
  * 5. Exchange code for tokens
  * 6. Store in ~/.pepagi/anthropic-oauth.json
