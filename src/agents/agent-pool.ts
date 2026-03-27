@@ -49,11 +49,11 @@ export class AgentPool {
       const model = agentConfig.model || def.defaultModel;
       const pricing = PRICING.find(p => p.model === model);
 
-      // Claude: always available via CLI OAuth (no API key needed)
-      // GPT/Gemini: available ONLY if has actual API key (env var or config)
-      //   gptSubscriptionMode removed from availability check — Codex OAuth is unreliable
+      // Claude: available via API key, OAuth token, or CLI
+      // GPT: available via API key or Codex OAuth (gptSubscriptionMode)
+      // Gemini: available only with API key
       // Ollama / LM Studio: available if enabled (health check done async via probeLocalModels)
-      const hasApiKey = !!(agentConfig.apiKey || (def.provider === "gpt" ? process.env.OPENAI_API_KEY : def.provider === "gemini" ? process.env.GOOGLE_API_KEY : null));
+      const hasApiKey = !!(agentConfig.apiKey || (def.provider === "gpt" ? (process.env.OPENAI_API_KEY || this.config.profile?.gptSubscriptionMode) : def.provider === "gemini" ? process.env.GOOGLE_API_KEY : null));
       const isAvailable = def.provider === "claude"
         ? agentConfig.enabled
         : localProviders.has(def.provider)

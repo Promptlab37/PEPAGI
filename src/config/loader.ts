@@ -329,7 +329,7 @@ export async function loadConfig(): Promise<PepagiConfig> {
     mgrIsUsable = customCfg.enabled && !!customCfg.baseUrl;
   } else if (builtinProviders.includes(mgrProvider as "claude" | "gpt" | "gemini")) {
     const mgrAgent = config.agents[mgrProvider as "claude" | "gpt" | "gemini"];
-    const mgrHasKey = !!(mgrAgent.apiKey || (mgrProvider === "claude" ? true : mgrProvider === "gpt" ? process.env.OPENAI_API_KEY : process.env.GOOGLE_API_KEY));
+    const mgrHasKey = !!(mgrAgent.apiKey || (mgrProvider === "claude" ? (true || config.profile.subscriptionMode) : mgrProvider === "gpt" ? (process.env.OPENAI_API_KEY || config.profile.gptSubscriptionMode) : process.env.GOOGLE_API_KEY));
     mgrIsUsable = mgrProvider === "claude" ? mgrAgent.enabled : mgrAgent.enabled && mgrHasKey;
   } else {
     mgrIsUsable = false;
@@ -351,7 +351,7 @@ export async function loadConfig(): Promise<PepagiConfig> {
     if (!found) {
       for (const candidate of builtinProviders) {
         const agentCfg = config.agents[candidate];
-        const hasKey = !!(agentCfg.apiKey || (candidate === "claude" ? true : candidate === "gpt" ? process.env.OPENAI_API_KEY : process.env.GOOGLE_API_KEY));
+        const hasKey = !!(agentCfg.apiKey || (candidate === "claude" ? (true || config.profile.subscriptionMode) : candidate === "gpt" ? (process.env.OPENAI_API_KEY || config.profile.gptSubscriptionMode) : process.env.GOOGLE_API_KEY));
         const usable = candidate === "claude" ? agentCfg.enabled : agentCfg.enabled && hasKey;
         if (usable) {
           log(`managerProvider was "${mgrProvider}" (disabled/no key) — auto-switching to "${candidate}"`);
